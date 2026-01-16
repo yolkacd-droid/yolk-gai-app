@@ -7,40 +7,63 @@ const DATA_KEY = 'gantt-app-data';
 const SUPABASE_CONFIG_KEY = 'gantt-supabase-config';
 const ADMIN_LOCK_KEY = 'gantt-admin-lock';
 
-// --- GLOBAL CONFIGURATION HELPER ---
-const getEnv = (key: string): string => {
-    let val = "";
-    
-    // 1. Vite / Modern Browsers (import.meta.env)
-    try {
-        const metaEnv = (import.meta as any).env;
-        if (metaEnv) {
-            val = metaEnv[key] || metaEnv[`VITE_${key}`] || "";
-        }
-    } catch (e) {}
-
-    // 2. Fallback to process.env (Node/Containers/Webpack shims)
-    if (!val) {
-        try {
-            if (typeof process !== 'undefined' && process.env) {
-                val = process.env[key] || process.env[`VITE_${key}`] || "";
-            }
-        } catch (e) {}
-    }
-    return val;
-};
+// Hardcoded fallbacks for when environment variable injection fails
+const FALLBACK_URL = "https://jvvqausidqgjtjteemyg.supabase.co";
+const FALLBACK_KEY = "sb_publishable_Xjitm41vvj5TDVK8m302mg_i8DZT9AM";
+const FALLBACK_PWD = "kiss1052";
 
 // --- GLOBAL CONFIGURATION ---
-const GLOBAL_SUPABASE_URL = getEnv("SUPABASE_URL");
-const GLOBAL_SUPABASE_KEY = getEnv("SUPABASE_KEY");
-const GLOBAL_ADMIN_PASSWORD = getEnv("ADMIN_PASSWORD");
+// 중요: Vite에서 환경변수를 올바르게 가져오기 위해 import.meta.env를 직접 참조합니다.
+// 런타임에 import.meta.env가 undefined일 경우 앱이 크래시되는 것을 방지하기 위해 try-catch로 감쌉니다.
 
-// Debugging Log (Console 확인용)
-if (GLOBAL_SUPABASE_URL) {
-    console.log("✅ Global Supabase Config Detected:", GLOBAL_SUPABASE_URL);
-} else {
-    console.log("⚠️ No Global Supabase Config Detected. Environment variables might be missing or server needs restart.");
+// 1. Vite Environment Variables
+let VITE_ENV_URL = "";
+let VITE_ENV_KEY = "";
+let VITE_ENV_PASSWORD = "";
+
+try {
+    // @ts-ignore
+    if (import.meta && import.meta.env) {
+        // @ts-ignore
+        VITE_ENV_URL = import.meta.env.VITE_SUPABASE_URL;
+        // @ts-ignore
+        VITE_ENV_KEY = import.meta.env.VITE_SUPABASE_KEY;
+        // @ts-ignore
+        VITE_ENV_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
+    }
+} catch (e) {
+    // import.meta.env가 정의되지 않은 환경(또는 치환 실패)에서는 조용히 무시하고 기본값을 사용합니다.
+    console.debug("Vite environment variables not accessible or not replaced:", e);
 }
+
+// 2. Fallback to process.env (Node/Containers)
+const getProcessEnv = (key: string) => {
+    try {
+        if (typeof process !== 'undefined' && process.env) {
+            return process.env[key] || process.env[`VITE_${key}`];
+        }
+    } catch (e) {}
+    return undefined;
+};
+
+// Safe Clean Helper
+const cleanEnv = (val: any) => {
+    if (!val) return "";
+    return String(val).replace(/^"|"$/g, '').trim();
+}
+
+// Use fallbacks if env vars are missing
+const GLOBAL_SUPABASE_URL = cleanEnv(VITE_ENV_URL || getProcessEnv("SUPABASE_URL") || FALLBACK_URL);
+const GLOBAL_SUPABASE_KEY = cleanEnv(VITE_ENV_KEY || getProcessEnv("SUPABASE_KEY") || FALLBACK_KEY);
+const GLOBAL_ADMIN_PASSWORD = cleanEnv(VITE_ENV_PASSWORD || getProcessEnv("ADMIN_PASSWORD") || FALLBACK_PWD);
+
+// Debugging Log
+console.log("Environment Config Load:", {
+    URL_CONFIGURED: !!GLOBAL_SUPABASE_URL,
+    KEY_CONFIGURED: !!GLOBAL_SUPABASE_KEY,
+    PWD_CONFIGURED: !!GLOBAL_ADMIN_PASSWORD,
+    USING_FALLBACK: !VITE_ENV_URL && !getProcessEnv("SUPABASE_URL")
+});
 
 // --- Initial Data ---
 const today = new Date();
@@ -77,8 +100,6 @@ export const initSupabase = (url: string, key: string) => {
             if (!GLOBAL_SUPABASE_URL) {
                 localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify({ url: targetUrl, key: targetKey }));
             } else {
-                // If using global config, ensure local storage doesn't conflict, 
-                // but we don't necessarily delete it to allow fallback if env var is removed later.
                 console.log("Using Global Supabase Connection");
             }
         } catch (e) {
