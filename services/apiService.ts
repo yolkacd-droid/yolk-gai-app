@@ -270,8 +270,8 @@ export const getProjects = async (): Promise<Project[]> => {
                     }))
             }));
             return projects;
-        } catch (err) {
-            console.error("Supabase fetch error", err);
+        } catch (err: any) {
+            console.error("Supabase fetch error (getProjects):", err.message || JSON.stringify(err));
             throw err;
         }
     } else {
@@ -281,22 +281,27 @@ export const getProjects = async (): Promise<Project[]> => {
 
 export const getDepartments = async (): Promise<Department[]> => {
     if (useSupabase && supabase) {
-        const { data: depts, error } = await supabase.from('departments').select('*').order('name');
-        if (error) throw error;
-        
-        const { data: emps, error: eError } = await supabase.from('employees').select('*');
-        if (eError) throw eError;
+        try {
+            const { data: depts, error } = await supabase.from('departments').select('*').order('name');
+            if (error) throw error;
+            
+            const { data: emps, error: eError } = await supabase.from('employees').select('*');
+            if (eError) throw eError;
 
-        // Map employees into departments
-        return (depts || []).map((d: any) => ({
-            id: d.id,
-            name: d.name,
-            employees: (emps || []).filter((e: any) => e.department_id === d.id).map((e: any) => ({
-                id: e.id,
-                name: e.name,
-                departmentId: e.department_id
-            }))
-        }));
+            // Map employees into departments
+            return (depts || []).map((d: any) => ({
+                id: d.id,
+                name: d.name,
+                employees: (emps || []).filter((e: any) => e.department_id === d.id).map((e: any) => ({
+                    id: e.id,
+                    name: e.name,
+                    departmentId: e.department_id
+                }))
+            }));
+        } catch (err: any) {
+            console.error("Supabase fetch error (getDepartments):", err.message || JSON.stringify(err));
+            throw err;
+        }
     } else {
         return readLocalData().departments;
     }
@@ -304,13 +309,18 @@ export const getDepartments = async (): Promise<Department[]> => {
 
 export const getEmployees = async (): Promise<Employee[]> => {
     if (useSupabase && supabase) {
-        const { data, error } = await supabase.from('employees').select('*').order('name');
-        if (error) throw error;
-        return (data || []).map((e: any) => ({
-            id: e.id,
-            name: e.name,
-            departmentId: e.department_id
-        }));
+        try {
+            const { data, error } = await supabase.from('employees').select('*').order('name');
+            if (error) throw error;
+            return (data || []).map((e: any) => ({
+                id: e.id,
+                name: e.name,
+                departmentId: e.department_id
+            }));
+        } catch (err: any) {
+            console.error("Supabase fetch error (getEmployees):", err.message || JSON.stringify(err));
+            throw err;
+        }
     } else {
         return readLocalData().employees;
     }

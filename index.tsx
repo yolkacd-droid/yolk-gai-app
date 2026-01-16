@@ -905,9 +905,9 @@ const GanttView: FC<{
                                 const startDate = new Date(task.startDate); const endDate = new Date(task.endDate);
                                 const startOffsetDays = getDaysBetween(viewStartDate, startDate) - 1;
                                 const durationDays = getDaysBetween(startDate, endDate);
-                                const left = startOffsetDays * uiSettings.dayWidth;
-                                const width = durationDays * uiSettings.dayWidth - 4;
-                                const rightEdgePosition = (left as number) + (width as number);
+                                const left: number = startOffsetDays * uiSettings.dayWidth;
+                                const width: number = durationDays * uiSettings.dayWidth - 4;
+                                const rightEdgePosition: number = left + width;
                                 if (task.progress === 100 && rightEdgePosition < scrollLeft) return null;
                                 return (
                                     <div className="flex group border-b border-gray-200/50 dark:border-gray-800/20 last:border-0 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors" style={{ height: uiSettings.rowHeight }} key={task.id}>
@@ -1000,7 +1000,7 @@ const App: FC = () => {
             const currentColumnWidths = isMobile
                 ? { project: Math.max(140, columnWidths.project * 0.7), department: 0, author: 0, progress: 0 }
                 : columnWidths;
-            const sidebarWidth = Object.values(currentColumnWidths).reduce((sum, w) => sum + w, 0);
+            const sidebarWidth = (Object.values(currentColumnWidths) as number[]).reduce((sum, w) => sum + w, 0);
             
             // Calculate available width for timeline (Total width - sidebar - padding)
             const availableWidth = window.innerWidth - sidebarWidth - 40; // 40px buffer for padding/margins
