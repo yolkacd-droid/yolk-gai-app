@@ -1,19 +1,33 @@
 
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>다현산업 팀 일정표</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              gray: {
+                950: '#030712',
+              }
+            }
+          }
+        }
+      }
+    </script>
     <style>
       @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
       body {
         font-family: 'Pretendard', sans-serif;
         overflow: hidden;
         -webkit-tap-highlight-color: transparent;
-        background-color: #030712;
+        /* background-color removed here, handled by Tailwind classes in index.tsx */
       }
       .no-scrollbar::-webkit-scrollbar {
         display: none;
@@ -27,13 +41,19 @@
         height: 6px;
       }
       ::-webkit-scrollbar-track {
-        background: #111827;
+        background: transparent;
       }
       ::-webkit-scrollbar-thumb {
-        background: #374151;
+        background: #9ca3af;
         border-radius: 10px;
       }
-      ::-webkit-scrollbar-thumb:hover {
+      .dark ::-webkit-scrollbar-track {
+        background: #111827;
+      }
+      .dark ::-webkit-scrollbar-thumb {
+        background: #374151;
+      }
+      .dark ::-webkit-scrollbar-thumb:hover {
         background: #4b5563;
       }
       /* Prevent iOS bounce */
@@ -61,7 +81,7 @@
 }
 </script>
 </head>
-  <body>
+  <body class="bg-gray-50 dark:bg-gray-950 transition-colors duration-300">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
