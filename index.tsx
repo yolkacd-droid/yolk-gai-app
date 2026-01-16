@@ -1017,6 +1017,11 @@ const App: FC = () => {
             if (remoteSettings) {
                 setUiSettings(remoteSettings);
             }
+            // Load remote column widths if connected
+            const remoteColumnWidths = await getRemoteSettings('column_widths');
+            if (remoteColumnWidths) {
+                setColumnWidths(remoteColumnWidths);
+            }
         } catch (e) {
             console.error("Failed to load data", e);
         } finally { setIsLoading(false); }
@@ -1069,7 +1074,15 @@ const App: FC = () => {
 
     useEffect(() => {
         localStorage.setItem(GANTT_COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
-    }, [columnWidths]);
+        
+        // Debounce save to server
+        const timer = setTimeout(() => {
+            if (isOnline) {
+                saveRemoteSettings('column_widths', columnWidths);
+            }
+        }, 1000); 
+        return () => clearTimeout(timer);
+    }, [columnWidths, isOnline]);
 
     // Handlers
     const handleSaveSupabase = async (url: string, key: string) => {
@@ -1082,6 +1095,9 @@ const App: FC = () => {
             // Connected successfully: Save current UI settings to DB as baseline if valid
             if (uiSettings) {
                 await saveRemoteSettings('ui_settings', uiSettings);
+            }
+            if (columnWidths) {
+                await saveRemoteSettings('column_widths', columnWidths);
             }
             await loadData(); // Reload data immediately
         } catch (e: any) {
