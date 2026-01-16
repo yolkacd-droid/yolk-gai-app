@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect, FC, useRef, useCallback } from 're
 import { createPortal } from 'react-dom';
 import ReactDOM from 'react-dom/client';
 import { Department, Employee, Task, Project } from './types';
-import { getProjects, getDepartments, getEmployees, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, updateProjects, initSupabase, getSupabaseConfig, isSupabaseEnabled, subscribeToChanges, checkConnectionAndSeed } from './services/apiService';
+import { getProjects, getDepartments, getEmployees, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, updateProjects, initSupabase, getSupabaseConfig, isSupabaseEnabled, subscribeToChanges, checkConnectionAndSeed, hasAdminPassword, verifyAdminPassword, setAdminPassword, isGlobalConfigured, isGlobalPassword, initSupabaseFromUrl, getShareableConfigLink, getRemoteSettings, saveRemoteSettings } from './services/apiService';
 import { addDays, getDaysBetween, formatDate } from './utils/dateUtils';
 import { ChevronLeftIcon, ChevronRightIcon, CalendarIcon, FilterIcon, PlusIcon, FolderIcon, ChevronDownIcon, XMarkIcon, PencilIcon, TrashIcon, GripVerticalIcon } from './components/icons';
 
@@ -79,7 +79,7 @@ const ModalBase: FC<{ isOpen: boolean; onClose: () => void; children: React.Reac
     if (!isOpen) return null;
     return (
         <div className="fixed inset-0 bg-black/70 flex items-end sm:items-center justify-center z-[100] p-0 sm:p-4" onClick={onClose}>
-            <div className="bg-gray-800 rounded-t-2xl sm:rounded-lg shadow-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto border border-gray-700" onClick={e => e.stopPropagation()}>
+            <div className="bg-gray-800 rounded-t-2xl sm:rounded-lg shadow-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto border border-gray-700 custom-scrollbar" onClick={e => e.stopPropagation()}>
                 {title && (
                     <div className="flex justify-between items-center mb-6">
                         <h3 className="text-xl font-bold text-white">{title}</h3>
@@ -123,6 +123,10 @@ const SettingsModal: FC<{ isOpen: boolean; onClose: () => void; settings: UISett
     const update = useCallback((key: keyof UISettings, val: any) => setSettings({ ...settings, [key]: val }), [settings, setSettings]);
     const [sbUrl, setSbUrl] = useState('');
     const [sbKey, setSbKey] = useState('');
+    const [adminPwd, setAdminPwd] = useState('');
+    const [isProtected, setIsProtected] = useState(false);
+    const [isGlobalConfig, setIsGlobalConfig] = useState(false);
+    const [isGlobalPwd, setIsGlobalPwd] = useState(false);
     
     useEffect(() => {
         const config = getSupabaseConfig();
@@ -130,39 +134,100 @@ const SettingsModal: FC<{ isOpen: boolean; onClose: () => void; settings: UISett
             setSbUrl(config.url);
             setSbKey(config.key);
         }
+        setIsProtected(hasAdminPassword());
+        setIsGlobalConfig(isGlobalConfigured());
+        setIsGlobalPwd(isGlobalPassword());
     }, [isOpen]);
 
     const handleSave = () => {
-        onSaveSupabase(sbUrl, sbKey);
+        if (!isGlobalConfig) {
+            onSaveSupabase(sbUrl, sbKey);
+        }
+        if (adminPwd && !isGlobalPwd) setAdminPassword(adminPwd);
         onClose();
     };
 
     const copySql = () => {
-        const sql = `create table projects (id text primary key, name text, created_at timestamptz default now());\ncreate table tasks (id text primary key, name text, start_date text, end_date text, color text, employee_id text, progress int, description text, project_id text references projects(id) on delete cascade);`;
+        const sql = `create table projects (id text primary key, name text, created_at timestamptz default now());\ncreate table tasks (id text primary key, name text, start_date text, end_date text, color text, employee_id text, progress int, description text, project_id text references projects(id) on delete cascade);\ncreate table system_settings (key text primary key, value jsonb);`;
         navigator.clipboard.writeText(sql);
         alert('SQL 쿼리가 클립보드에 복사되었습니다. Supabase SQL 에디터에서 실행하세요.');
     };
 
     return (
         <ModalBase isOpen={isOpen} onClose={onClose} title="표시 및 시스템 설정">
-            <div className="space-y-8">
+            <div className="space-y-8 pb-32">
+                 <section className="space-y-5">
+                    <h4 className="text-xs font-bold text-rose-400 uppercase tracking-widest border-b border-rose-400/20 pb-2">보안 설정</h4>
+                    <div className="space-y-3">
+                        <p className="text-xs text-rose-200 leading-relaxed">
+                             설정 메뉴 접근 시 사용할 비밀번호를 설정하여 무단 변경을 방지하세요.
+                        </p>
+                         {isProtected && <div className="px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-400 text-xs font-bold flex items-center gap-2"><span>🔒</span>현재 비밀번호가 설정되어 있습니다.</div>}
+                         {isGlobalPwd && <div className="px-3 py-2 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-indigo-400 text-xs font-bold flex items-center gap-2"><span>🛡️</span>소스 코드에 의해 비밀번호가 고정되었습니다.</div>}
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">관리자 비밀번호 {isProtected ? '변경' : '설정'}</label>
+                            <input 
+                                type="password" 
+                                value={adminPwd} 
+                                onChange={e => setAdminPwd(e.target.value)} 
+                                placeholder={isGlobalPwd ? "소스 코드에서 관리됨" : (isProtected ? "새 비밀번호 (비워두면 유지)" : "비밀번호 입력")} 
+                                disabled={isGlobalPwd}
+                                className="w-full bg-gray-700/50 border border-gray-600 rounded-lg p-3 text-white text-sm focus:ring-1 focus:ring-rose-500 outline-none transition-all placeholder-gray-500 disabled:opacity-50 disabled:cursor-not-allowed" 
+                            />
+                        </div>
+                    </div>
+                </section>
+
                  <section className="space-y-5">
                     <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest border-b border-indigo-400/20 pb-2">실시간 데이터베이스 (Supabase)</h4>
                     <div className="space-y-3">
-                        <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
-                            <p className="text-xs text-indigo-200 leading-relaxed">
-                                <strong className="text-white">Supabase</strong>를 연결하면 여러 사용자가 실시간으로 같은 화면을 볼 수 있습니다.
-                            </p>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">Project URL</label>
-                            <input type="text" value={sbUrl} onChange={e => setSbUrl(e.target.value)} placeholder="https://xyz.supabase.co" className="w-full bg-gray-700/50 border border-gray-600 rounded-lg p-2 text-white text-xs focus:ring-1 focus:ring-indigo-500 outline-none" />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 mb-1">Anon / Public Key</label>
-                            <input type="password" value={sbKey} onChange={e => setSbKey(e.target.value)} placeholder="eyJhbGciOiJIUzI1NiIsInR5..." className="w-full bg-gray-700/50 border border-gray-600 rounded-lg p-2 text-white text-xs focus:ring-1 focus:ring-indigo-500 outline-none" />
-                        </div>
-                        <button onClick={copySql} className="text-xs text-indigo-400 hover:text-indigo-300 underline font-bold">SQL 설정 스크립트 복사</button>
+                        {isGlobalConfig ? (
+                            <div className="p-4 bg-gray-800/50 rounded-xl border border-gray-700 space-y-3">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-full bg-emerald-500/20 text-emerald-400">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                                          <path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-bold text-gray-200">환경 변수로 연결됨</p>
+                                        <p className="text-xs text-gray-500">시스템 환경 변수(.env) 설정을 사용 중입니다.</p>
+                                    </div>
+                                </div>
+                                <button onClick={copySql} className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 text-indigo-400 hover:text-indigo-300 text-xs font-bold rounded-lg transition-all border border-gray-600">
+                                    초기 설정용 SQL 스크립트 복사
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+                                    <p className="text-xs text-indigo-200 leading-relaxed">
+                                        <strong className="text-white">Supabase</strong>를 연결하면 여러 사용자가 실시간으로 같은 화면을 볼 수 있습니다. 설정 정보는 앱에 안전하게 저장됩니다.
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 mb-1">Project URL</label>
+                                    <input 
+                                        type="text" 
+                                        value={sbUrl} 
+                                        onChange={e => setSbUrl(e.target.value)} 
+                                        placeholder="https://xyz.supabase.co" 
+                                        className="w-full bg-gray-700/50 border border-gray-600 rounded-lg p-2 text-white text-xs focus:ring-1 focus:ring-indigo-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed" 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 mb-1">Anon / Public Key</label>
+                                    <input 
+                                        type="password" 
+                                        value={sbKey} 
+                                        onChange={e => setSbKey(e.target.value)} 
+                                        placeholder="eyJhbGciOiJIUzI1NiIsInR5..." 
+                                        className="w-full bg-gray-700/50 border border-gray-600 rounded-lg p-2 text-white text-xs focus:ring-1 focus:ring-indigo-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed" 
+                                    />
+                                </div>
+                                <button onClick={copySql} className="text-xs text-indigo-400 hover:text-indigo-300 underline font-bold">SQL 설정 스크립트 복사</button>
+                            </>
+                        )}
                     </div>
                 </section>
 
@@ -186,8 +251,56 @@ const SettingsModal: FC<{ isOpen: boolean; onClose: () => void; settings: UISett
     );
 };
 
+const AuthModal: FC<{ isOpen: boolean; onClose: () => void; onSuccess: () => void }> = ({ isOpen, onClose, onSuccess }) => {
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (isOpen) {
+            setPassword('');
+            setError(false);
+            setTimeout(() => inputRef.current?.focus(), 100);
+        }
+    }, [isOpen]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (verifyAdminPassword(password)) {
+            onSuccess();
+            onClose();
+        } else {
+            setError(true);
+            setPassword('');
+        }
+    };
+
+    return (
+        <ModalBase isOpen={isOpen} onClose={onClose} title="관리자 인증">
+            <form onSubmit={handleSubmit} className="space-y-6">
+                 <div className="p-4 bg-gray-700/50 rounded-xl border border-gray-600">
+                    <p className="text-sm text-gray-300 text-center">설정 메뉴에 접근하려면 비밀번호를 입력하세요.</p>
+                </div>
+                <div>
+                    <input 
+                        ref={inputRef}
+                        type="password" 
+                        value={password} 
+                        onChange={e => { setPassword(e.target.value); setError(false); }} 
+                        placeholder="비밀번호 입력" 
+                        className={`w-full bg-gray-900/50 border ${error ? 'border-red-500 focus:ring-red-500' : 'border-gray-600 focus:ring-indigo-500'} rounded-xl p-4 text-white text-lg text-center tracking-widest focus:ring-2 outline-none transition-all`} 
+                        autoFocus
+                    />
+                    {error && <p className="text-red-400 text-xs font-bold text-center mt-2 animate-pulse">비밀번호가 일치하지 않습니다.</p>}
+                </div>
+                <button type="submit" className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95">확인</button>
+            </form>
+        </ModalBase>
+    );
+};
+
 // --- Task/Project Management Modals ---
-// ... (same as before)
+// ... (All other components remain unchanged from previous state)
 
 const TaskModal: FC<{
     isOpen: boolean;
@@ -339,7 +452,7 @@ const ConfirmationModal: FC<{
 };
 
 // --- Main Components ---
-// ... (Header, TimelineHeader, TaskBar, ProjectBar, TimelineGridBackground, GanttView unchanged, including to satisfy file requirement)
+// ... (Header, TimelineHeader, TaskBar, ProjectBar, TimelineGridBackground, GanttView unchanged)
 
 const Header: FC<{
     departments: Department[];
@@ -710,6 +823,7 @@ const App: FC = () => {
 
     // Modals
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
     const [projectModal, setProjectModal] = useState<{ open: boolean; project: Project | null }>({ open: false, project: null });
     const [taskModal, setTaskModal] = useState<{ open: boolean; task: Task | null; projectId: string | null }>({ open: false, task: null, projectId: null });
     const [confirmModal, setConfirmModal] = useState<{ open: boolean; type: 'project' | 'task'; id: string; subId?: string; title: string; message: string }>({ open: false, type: 'project', id: '', title: '', message: '' });
@@ -733,16 +847,25 @@ const App: FC = () => {
             const [loadedProjects, loadedDepartments, loadedEmployees] = await Promise.all([getProjects(), getDepartments(), getEmployees()]);
             setProjects(loadedProjects); setDepartments(loadedDepartments); setEmployees(loadedEmployees);
             setExpandedProjects(prev => {
-                // Keep existing expansion state, but ensure new projects are open by default if initial load
                 if (Object.keys(prev).length === 0) {
                     return Object.fromEntries(loadedProjects.map(p => [p.id, true]));
                 }
                 return prev;
             });
+            // Load remote UI settings if connected
+            const remoteSettings = await getRemoteSettings('ui_settings');
+            if (remoteSettings) {
+                setUiSettings(remoteSettings);
+            }
         } finally { setIsLoading(false); }
     }, []);
 
+    // Check for URL config on mount
     useEffect(() => {
+        const hasUrlConfig = initSupabaseFromUrl();
+        if (hasUrlConfig) {
+            setIsOnline(true);
+        }
         loadData();
     }, [loadData]);
 
@@ -750,7 +873,6 @@ const App: FC = () => {
     useEffect(() => {
         if (isSupabaseEnabled()) {
             const unsubscribe = subscribeToChanges(() => {
-                // When DB changes, refresh data
                 loadData();
             });
             return () => { unsubscribe(); };
@@ -765,8 +887,6 @@ const App: FC = () => {
 
     const filteredProjects = useMemo(() => {
         if (filter.departmentId === 'all' && filter.employeeId === 'all') return projects;
-        
-        // Filter logic: Only show projects that have tasks matching the filter
         return projects.map(p => {
              const filteredTasks = p.tasks.filter(t => {
                  const emp = employeeMap.get(t.employeeId);
@@ -779,7 +899,7 @@ const App: FC = () => {
         }).filter(p => p.tasks.length > 0);
     }, [projects, filter, employeeMap]);
 
-    // Effects
+    // Effects for saving settings
     useEffect(() => {
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(uiSettings));
     }, [uiSettings]);
@@ -800,14 +920,11 @@ const App: FC = () => {
     };
 
     useEffect(() => {
-        // Adjust start date to include today - 2 days for context
         const start = new Date();
         start.setDate(start.getDate() - 2);
         start.setHours(0,0,0,0);
         setViewStartDate(start);
-
         fetchData();
-
         const unsubscribe = subscribeToChanges(() => fetchData());
         return () => { unsubscribe(); };
     }, []);
@@ -820,17 +937,29 @@ const App: FC = () => {
         
         try {
             await checkConnectionAndSeed();
+            // Connected successfully: Save current UI settings to DB as baseline if valid
+            if (uiSettings) {
+                await saveRemoteSettings('ui_settings', uiSettings);
+            }
             await fetchData();
         } catch (e: any) {
             console.error(e);
             if (e.message === 'TABLES_MISSING') {
-                alert('데이터베이스 테이블이 없습니다. 설정 메뉴의 SQL을 Supabase SQL Editor에서 실행해주세요.');
+                alert('데이터베이스 테이블이 없습니다. 설정 메뉴의 "1. SQL 스크립트 복사"를 눌러 Supabase SQL Editor에서 실행해주세요.');
                 setIsSettingsOpen(true);
             } else {
                 alert('데이터베이스 연결 실패: ' + e.message);
             }
         } finally {
             setIsLoading(false);
+        }
+    };
+    
+    // Auto-save UI settings to DB if online
+    const handleUiSettingsChange = (newSettings: UISettings) => {
+        setUiSettings(newSettings);
+        if (isOnline) {
+            saveRemoteSettings('ui_settings', newSettings);
         }
     };
 
@@ -887,7 +1016,6 @@ const App: FC = () => {
     };
 
     const handleProgressChange = async (projectId: string, taskId: string, progress: number) => {
-        // Optimistic update
         setProjects(prev => prev.map(p => {
             if (p.id !== projectId) return p;
             return { ...p, tasks: p.tasks.map(t => t.id === taskId ? { ...t, progress } : t) };
@@ -909,13 +1037,19 @@ const App: FC = () => {
         const draggedIndex = projects.findIndex(p => p.id === draggedId);
         const targetIndex = projects.findIndex(p => p.id === targetId);
         if (draggedIndex === -1 || targetIndex === -1) return;
-
         const newProjects = [...projects];
         const [removed] = newProjects.splice(draggedIndex, 1);
         newProjects.splice(targetIndex, 0, removed);
-        
         setProjects(newProjects);
         await updateProjects(newProjects);
+    };
+
+    const handleOpenSettings = () => {
+        if (hasAdminPassword()) {
+            setIsAuthModalOpen(true);
+        } else {
+            setIsSettingsOpen(true);
+        }
     };
 
     if (isLoading) return <div className="bg-gray-950 text-white min-h-screen flex flex-col items-center justify-center font-sans tracking-tight"><div className="w-16 h-16 border-[6px] border-indigo-600 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_40px_rgba(79,70,229,0.4)]" /><div className="text-2xl font-black animate-pulse text-indigo-300 tracking-tighter uppercase">DAHYUN GANTT IS LOADING...</div></div>;
@@ -928,7 +1062,7 @@ const App: FC = () => {
                 setFilter={setFilter}
                 viewStartDate={viewStartDate}
                 setViewStartDate={setViewStartDate}
-                onOpenSettings={() => setIsSettingsOpen(true)}
+                onOpenSettings={handleOpenSettings}
                 isOnline={isOnline}
             />
             <main className="flex-grow p-2 sm:p-4 overflow-hidden flex flex-col">
@@ -956,7 +1090,8 @@ const App: FC = () => {
             </main>
 
             {/* Modals */}
-            <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={uiSettings} setSettings={setUiSettings} onSaveSupabase={handleSaveSupabase} />
+            <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={uiSettings} setSettings={handleUiSettingsChange} onSaveSupabase={handleSaveSupabase} />
+            <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} onSuccess={() => setIsSettingsOpen(true)} />
             <ProjectModal isOpen={projectModal.open} onClose={() => setProjectModal({ open: false, project: null })} onSubmit={handleProjectSubmit} project={projectModal.project} />
             <TaskModal isOpen={taskModal.open} onClose={() => setTaskModal({ open: false, task: null, projectId: null })} onSubmit={handleTaskSubmit} employees={employees} task={taskModal.task || undefined} project={projects.find(p => p.id === taskModal.projectId) || null} />
             <ConfirmationModal isOpen={confirmModal.open} onClose={() => setConfirmModal({ ...confirmModal, open: false })} onConfirm={handleDelete} title={confirmModal.title} message={confirmModal.message} />

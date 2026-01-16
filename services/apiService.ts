@@ -5,8 +5,44 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const DATA_KEY = 'gantt-app-data';
 const SUPABASE_CONFIG_KEY = 'gantt-supabase-config';
+const ADMIN_LOCK_KEY = 'gantt-admin-lock';
 
-// --- Initial Data (Static for now, synced projects/tasks later) ---
+// --- GLOBAL CONFIGURATION HELPER ---
+const getEnv = (key: string): string => {
+    let val = "";
+    
+    // 1. Vite / Modern Browsers (import.meta.env)
+    try {
+        const metaEnv = (import.meta as any).env;
+        if (metaEnv) {
+            val = metaEnv[key] || metaEnv[`VITE_${key}`] || "";
+        }
+    } catch (e) {}
+
+    // 2. Fallback to process.env (Node/Containers/Webpack shims)
+    if (!val) {
+        try {
+            if (typeof process !== 'undefined' && process.env) {
+                val = process.env[key] || process.env[`VITE_${key}`] || "";
+            }
+        } catch (e) {}
+    }
+    return val;
+};
+
+// --- GLOBAL CONFIGURATION ---
+const GLOBAL_SUPABASE_URL = getEnv("SUPABASE_URL");
+const GLOBAL_SUPABASE_KEY = getEnv("SUPABASE_KEY");
+const GLOBAL_ADMIN_PASSWORD = getEnv("ADMIN_PASSWORD");
+
+// Debugging Log (Console 확인용)
+if (GLOBAL_SUPABASE_URL) {
+    console.log("✅ Global Supabase Config Detected:", GLOBAL_SUPABASE_URL);
+} else {
+    console.log("⚠️ No Global Supabase Config Detected. Environment variables might be missing or server needs restart.");
+}
+
+// --- Initial Data ---
 const today = new Date();
 today.setHours(0, 0, 0, 0);
 
@@ -29,11 +65,22 @@ let supabase: SupabaseClient | null = null;
 let useSupabase = false;
 
 export const initSupabase = (url: string, key: string) => {
-    if (url && key) {
+    // Prefer Global Config if available
+    const targetUrl = GLOBAL_SUPABASE_URL || url;
+    const targetKey = GLOBAL_SUPABASE_KEY || key;
+
+    if (targetUrl && targetKey) {
         try {
-            supabase = createClient(url, key);
+            supabase = createClient(targetUrl, targetKey);
             useSupabase = true;
-            localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify({ url, key }));
+            // Only save to local storage if NOT using global config, to avoid confusion
+            if (!GLOBAL_SUPABASE_URL) {
+                localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify({ url: targetUrl, key: targetKey }));
+            } else {
+                // If using global config, ensure local storage doesn't conflict, 
+                // but we don't necessarily delete it to allow fallback if env var is removed later.
+                console.log("Using Global Supabase Connection");
+            }
         } catch (e) {
             console.error("Supabase init failed", e);
             useSupabase = false;
@@ -41,15 +88,25 @@ export const initSupabase = (url: string, key: string) => {
     } else {
         supabase = null;
         useSupabase = false;
-        localStorage.removeItem(SUPABASE_CONFIG_KEY);
+        if (!GLOBAL_SUPABASE_URL) {
+            localStorage.removeItem(SUPABASE_CONFIG_KEY);
+        }
     }
 };
 
 export const getSupabaseConfig = () => {
+    if (GLOBAL_SUPABASE_URL && GLOBAL_SUPABASE_KEY) {
+        return { url: GLOBAL_SUPABASE_URL, key: GLOBAL_SUPABASE_KEY };
+    }
     try {
         const stored = localStorage.getItem(SUPABASE_CONFIG_KEY);
         return stored ? JSON.parse(stored) : null;
     } catch { return null; }
+};
+
+// Check if configured globally (read-only in UI)
+export const isGlobalConfigured = () => {
+    return !!(GLOBAL_SUPABASE_URL && GLOBAL_SUPABASE_KEY);
 };
 
 // Auto-init if credentials exist
@@ -57,6 +114,61 @@ const storedConfig = getSupabaseConfig();
 if (storedConfig) initSupabase(storedConfig.url, storedConfig.key);
 
 export const isSupabaseEnabled = () => useSupabase;
+
+export const initSupabaseFromUrl = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    const sbUrl = params.get('sbUrl');
+    const sbKey = params.get('sbKey');
+    
+    if (sbUrl && sbKey) {
+        initSupabase(sbUrl, sbKey);
+        const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+        window.history.replaceState({ path: newUrl }, '', newUrl);
+        return true;
+    }
+    return false;
+};
+
+export const getShareableConfigLink = (): string | null => {
+    const config = getSupabaseConfig();
+    if (!config) return null;
+    const url = new URL(window.location.href);
+    url.searchParams.set('sbUrl', config.url);
+    url.searchParams.set('sbKey', config.key);
+    return url.toString();
+};
+
+// --- Security / Password Management ---
+export const setAdminPassword = (password: string) => {
+    if (GLOBAL_ADMIN_PASSWORD) {
+        console.warn("Cannot change admin password when GLOBAL_ADMIN_PASSWORD is set in code.");
+        return;
+    }
+    if (!password) {
+        localStorage.removeItem(ADMIN_LOCK_KEY);
+    } else {
+        localStorage.setItem(ADMIN_LOCK_KEY, password);
+    }
+};
+
+export const verifyAdminPassword = (input: string) => {
+    if (GLOBAL_ADMIN_PASSWORD) {
+        return input === GLOBAL_ADMIN_PASSWORD;
+    }
+    const stored = localStorage.getItem(ADMIN_LOCK_KEY);
+    return stored === input;
+};
+
+export const hasAdminPassword = () => {
+    if (GLOBAL_ADMIN_PASSWORD) return true;
+    return !!localStorage.getItem(ADMIN_LOCK_KEY);
+};
+
+export const isGlobalPassword = () => {
+    return !!GLOBAL_ADMIN_PASSWORD;
+}
+
 
 // --- Data Helpers ---
 
@@ -304,7 +416,7 @@ export const deleteTask = async (projectId: string, taskId: string): Promise<{ i
             writeLocalData(data);
         }
     }
-    return { id: taskId };
+    return { id: projectId };
 };
 
 export const updateProjects = async (projects: Project[]): Promise<Project[]> => {
@@ -314,6 +426,42 @@ export const updateProjects = async (projects: Project[]): Promise<Project[]> =>
         writeLocalData(data);
     }
     return projects;
+};
+
+// --- Remote Settings (System Settings) ---
+
+export const getRemoteSettings = async (key: string): Promise<any> => {
+    if (!useSupabase || !supabase) return null;
+    try {
+        const { data, error } = await supabase
+            .from('system_settings')
+            .select('value')
+            .eq('key', key)
+            .single();
+        
+        if (error) return null;
+        return data?.value;
+    } catch (e) {
+        console.error("Error fetching remote settings", e);
+        return null;
+    }
+};
+
+export const saveRemoteSettings = async (key: string, value: any): Promise<void> => {
+    if (!useSupabase || !supabase) return;
+    try {
+        const { error } = await supabase
+            .from('system_settings')
+            .upsert({ key, value });
+        
+        if (error) {
+             // 42P01: undefined_table
+            if (error.code === '42P01') return;
+            console.error("Error saving remote settings", error);
+        }
+    } catch (e) {
+        console.error("Error saving remote settings", e);
+    }
 };
 
 // --- Seed & Check Functions ---
