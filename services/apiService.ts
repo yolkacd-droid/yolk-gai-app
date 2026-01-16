@@ -13,10 +13,6 @@ const FALLBACK_KEY = "sb_publishable_Xjitm41vvj5TDVK8m302mg_i8DZT9AM";
 const FALLBACK_PWD = "kiss1052";
 
 // --- GLOBAL CONFIGURATION ---
-// 중요: Vite에서 환경변수를 올바르게 가져오기 위해 import.meta.env를 직접 참조합니다.
-// 런타임에 import.meta.env가 undefined일 경우 앱이 크래시되는 것을 방지하기 위해 try-catch로 감쌉니다.
-
-// 1. Vite Environment Variables
 let VITE_ENV_URL = "";
 let VITE_ENV_KEY = "";
 let VITE_ENV_PASSWORD = "";
@@ -32,11 +28,9 @@ try {
         VITE_ENV_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
     }
 } catch (e) {
-    // import.meta.env가 정의되지 않은 환경(또는 치환 실패)에서는 조용히 무시하고 기본값을 사용합니다.
     console.debug("Vite environment variables not accessible or not replaced:", e);
 }
 
-// 2. Fallback to process.env (Node/Containers)
 const getProcessEnv = (key: string) => {
     try {
         if (typeof process !== 'undefined' && process.env) {
@@ -46,18 +40,15 @@ const getProcessEnv = (key: string) => {
     return undefined;
 };
 
-// Safe Clean Helper
 const cleanEnv = (val: any) => {
     if (!val) return "";
     return String(val).replace(/^"|"$/g, '').trim();
 }
 
-// Use fallbacks if env vars are missing
 const GLOBAL_SUPABASE_URL = cleanEnv(VITE_ENV_URL || getProcessEnv("SUPABASE_URL") || FALLBACK_URL);
 const GLOBAL_SUPABASE_KEY = cleanEnv(VITE_ENV_KEY || getProcessEnv("SUPABASE_KEY") || FALLBACK_KEY);
 const GLOBAL_ADMIN_PASSWORD = cleanEnv(VITE_ENV_PASSWORD || getProcessEnv("ADMIN_PASSWORD") || FALLBACK_PWD);
 
-// Debugging Log
 console.log("Environment Config Load:", {
     URL_CONFIGURED: !!GLOBAL_SUPABASE_URL,
     KEY_CONFIGURED: !!GLOBAL_SUPABASE_KEY,
@@ -65,11 +56,11 @@ console.log("Environment Config Load:", {
     USING_FALLBACK: !VITE_ENV_URL && !getProcessEnv("SUPABASE_URL")
 });
 
-// --- Initial Data ---
+// --- Initial Data Defaults (Used for seeding only) ---
 const today = new Date();
 today.setHours(0, 0, 0, 0);
 
-const initialEmployees: Employee[] = [
+const defaultEmployees: Employee[] = [
   { id: 'e1', name: '앨리스 존슨', departmentId: 'd1' },
   { id: 'e2', name: '밥 윌리엄스', departmentId: 'd1' },
   { id: 'e3', name: '찰리 브라운', departmentId: 'd2' },
@@ -77,10 +68,10 @@ const initialEmployees: Employee[] = [
   { id: 'e5', name: '이든 데이비스', departmentId: 'd3' },
 ];
 
-const initialDepartments: Department[] = [
-  { id: 'd1', name: '엔지니어링', employees: initialEmployees.filter(e => e.departmentId === 'd1') },
-  { id: 'd2', name: '마케팅', employees: initialEmployees.filter(e => e.departmentId === 'd2') },
-  { id: 'd3', name: '제품', employees: initialEmployees.filter(e => e.departmentId === 'd3') },
+const defaultDepartments: Department[] = [
+  { id: 'd1', name: '엔지니어링', employees: [] },
+  { id: 'd2', name: '마케팅', employees: [] },
+  { id: 'd3', name: '제품', employees: [] },
 ];
 
 // --- Supabase Client Management ---
@@ -88,7 +79,6 @@ let supabase: SupabaseClient | null = null;
 let useSupabase = false;
 
 export const initSupabase = (url: string, key: string) => {
-    // Prefer Global Config if available
     const targetUrl = GLOBAL_SUPABASE_URL || url;
     const targetKey = GLOBAL_SUPABASE_KEY || key;
 
@@ -96,11 +86,8 @@ export const initSupabase = (url: string, key: string) => {
         try {
             supabase = createClient(targetUrl, targetKey);
             useSupabase = true;
-            // Only save to local storage if NOT using global config, to avoid confusion
             if (!GLOBAL_SUPABASE_URL) {
                 localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify({ url: targetUrl, key: targetKey }));
-            } else {
-                console.log("Using Global Supabase Connection");
             }
         } catch (e) {
             console.error("Supabase init failed", e);
@@ -125,12 +112,7 @@ export const getSupabaseConfig = () => {
     } catch { return null; }
 };
 
-// Check if configured globally (read-only in UI)
-export const isGlobalConfigured = () => {
-    return !!(GLOBAL_SUPABASE_URL && GLOBAL_SUPABASE_KEY);
-};
-
-// Auto-init if credentials exist
+export const isGlobalConfigured = () => !!(GLOBAL_SUPABASE_URL && GLOBAL_SUPABASE_KEY);
 const storedConfig = getSupabaseConfig();
 if (storedConfig) initSupabase(storedConfig.url, storedConfig.key);
 
@@ -160,23 +142,14 @@ export const getShareableConfigLink = (): string | null => {
     return url.toString();
 };
 
-// --- Security / Password Management ---
 export const setAdminPassword = (password: string) => {
-    if (GLOBAL_ADMIN_PASSWORD) {
-        console.warn("Cannot change admin password when GLOBAL_ADMIN_PASSWORD is set in code.");
-        return;
-    }
-    if (!password) {
-        localStorage.removeItem(ADMIN_LOCK_KEY);
-    } else {
-        localStorage.setItem(ADMIN_LOCK_KEY, password);
-    }
+    if (GLOBAL_ADMIN_PASSWORD) return;
+    if (!password) localStorage.removeItem(ADMIN_LOCK_KEY);
+    else localStorage.setItem(ADMIN_LOCK_KEY, password);
 };
 
 export const verifyAdminPassword = (input: string) => {
-    if (GLOBAL_ADMIN_PASSWORD) {
-        return input === GLOBAL_ADMIN_PASSWORD;
-    }
+    if (GLOBAL_ADMIN_PASSWORD) return input === GLOBAL_ADMIN_PASSWORD;
     const stored = localStorage.getItem(ADMIN_LOCK_KEY);
     return stored === input;
 };
@@ -186,14 +159,10 @@ export const hasAdminPassword = () => {
     return !!localStorage.getItem(ADMIN_LOCK_KEY);
 };
 
-export const isGlobalPassword = () => {
-    return !!GLOBAL_ADMIN_PASSWORD;
-}
-
+export const isGlobalPassword = () => !!GLOBAL_ADMIN_PASSWORD;
 
 // --- Data Helpers ---
 
-// Local Storage Helper
 interface AppData {
     projects: Project[];
     departments: Department[];
@@ -201,6 +170,12 @@ interface AppData {
 }
 
 function getInitialData(): AppData {
+    // Merge default employees into default departments for local storage structure
+    const hydratedDepts = defaultDepartments.map(d => ({
+        ...d,
+        employees: defaultEmployees.filter(e => e.departmentId === d.id)
+    }));
+
     return {
         projects: [
             {
@@ -213,8 +188,8 @@ function getInitialData(): AppData {
                 ],
             }
         ],
-        departments: initialDepartments,
-        employees: initialEmployees,
+        departments: hydratedDepts,
+        employees: defaultEmployees,
     };
 }
 
@@ -228,13 +203,14 @@ function readLocalData(): AppData {
         }
         const parsedData = JSON.parse(rawData);
         
-        // Ensure structure validity
+        // Structure Check
         if (!parsedData || !Array.isArray(parsedData.projects)) {
              const initialData = getInitialData();
-             writeLocalData(initialData); // Recover structure
+             writeLocalData(initialData);
              return initialData;
         }
 
+        // Ensure date objects
         if (parsedData.projects) {
             parsedData.projects.forEach((p: Project) => {
                 if(p.tasks) {
@@ -243,10 +219,15 @@ function readLocalData(): AppData {
                         t.endDate = new Date(t.endDate);
                     });
                 } else {
-                    p.tasks = []; // Ensure tasks array exists
+                    p.tasks = [];
                 }
             });
         }
+        
+        // Ensure employees/departments exist if migrating from old version
+        if (!parsedData.departments) parsedData.departments = getInitialData().departments;
+        if (!parsedData.employees) parsedData.employees = getInitialData().employees;
+
         return parsedData;
     } catch (error) {
         console.error("Failed to read local data", error);
@@ -263,22 +244,15 @@ function writeLocalData(data: AppData) {
 export const getProjects = async (): Promise<Project[]> => {
     if (useSupabase && supabase) {
         try {
-            // Fetch Projects
             const { data: projectsData, error: pError } = await supabase
                 .from('projects')
                 .select('*')
                 .order('created_at', { ascending: true });
-            
             if (pError) throw pError;
 
-            // Fetch Tasks
-            const { data: tasksData, error: tError } = await supabase
-                .from('tasks')
-                .select('*');
-
+            const { data: tasksData, error: tError } = await supabase.from('tasks').select('*');
             if (tError) throw tError;
 
-            // Map Supabase flat data to nested structure
             const projects: Project[] = (projectsData || []).map((p: any) => ({
                 id: p.id,
                 name: p.name,
@@ -306,22 +280,117 @@ export const getProjects = async (): Promise<Project[]> => {
 };
 
 export const getDepartments = async (): Promise<Department[]> => {
-    return initialDepartments;
+    if (useSupabase && supabase) {
+        const { data: depts, error } = await supabase.from('departments').select('*').order('name');
+        if (error) throw error;
+        
+        const { data: emps, error: eError } = await supabase.from('employees').select('*');
+        if (eError) throw eError;
+
+        // Map employees into departments
+        return (depts || []).map((d: any) => ({
+            id: d.id,
+            name: d.name,
+            employees: (emps || []).filter((e: any) => e.department_id === d.id).map((e: any) => ({
+                id: e.id,
+                name: e.name,
+                departmentId: e.department_id
+            }))
+        }));
+    } else {
+        return readLocalData().departments;
+    }
 };
 
 export const getEmployees = async (): Promise<Employee[]> => {
-    return initialEmployees;
+    if (useSupabase && supabase) {
+        const { data, error } = await supabase.from('employees').select('*').order('name');
+        if (error) throw error;
+        return (data || []).map((e: any) => ({
+            id: e.id,
+            name: e.name,
+            departmentId: e.department_id
+        }));
+    } else {
+        return readLocalData().employees;
+    }
 };
+
+// --- Organization Management (CRUD) ---
+
+export const addDepartment = async (name: string): Promise<Department> => {
+    const newId = `dept-${Date.now()}`;
+    const newDept: Department = { id: newId, name, employees: [] };
+
+    if (useSupabase && supabase) {
+        const { error } = await supabase.from('departments').insert({ id: newId, name });
+        if (error) throw error;
+        return newDept;
+    } else {
+        const data = readLocalData();
+        data.departments.push(newDept);
+        writeLocalData(data);
+        return newDept;
+    }
+};
+
+export const deleteDepartment = async (id: string): Promise<void> => {
+    if (useSupabase && supabase) {
+        const { error } = await supabase.from('departments').delete().eq('id', id);
+        if (error) throw error;
+    } else {
+        const data = readLocalData();
+        data.departments = data.departments.filter(d => d.id !== id);
+        // Also remove employees in this dept or move them? For now, we assume local implementation cascades or filters out
+        data.employees = data.employees.filter(e => e.departmentId !== id);
+        writeLocalData(data);
+    }
+};
+
+export const addEmployee = async (name: string, departmentId: string): Promise<Employee> => {
+    const newId = `emp-${Date.now()}`;
+    const newEmp: Employee = { id: newId, name, departmentId };
+
+    if (useSupabase && supabase) {
+        const { error } = await supabase.from('employees').insert({ 
+            id: newId, 
+            name, 
+            department_id: departmentId 
+        });
+        if (error) throw error;
+        return newEmp;
+    } else {
+        const data = readLocalData();
+        data.employees.push(newEmp);
+        const dept = data.departments.find(d => d.id === departmentId);
+        if (dept) dept.employees.push(newEmp);
+        writeLocalData(data);
+        return newEmp;
+    }
+};
+
+export const deleteEmployee = async (id: string): Promise<void> => {
+    if (useSupabase && supabase) {
+        const { error } = await supabase.from('employees').delete().eq('id', id);
+        if (error) throw error;
+    } else {
+        const data = readLocalData();
+        data.employees = data.employees.filter(e => e.id !== id);
+        data.departments.forEach(d => {
+            d.employees = d.employees.filter(e => e.id !== id);
+        });
+        writeLocalData(data);
+    }
+};
+
+// --- Project/Task CRUD ---
 
 export const addProject = async (projectName: string): Promise<Project> => {
     const newId = `project-${Date.now()}`;
     const newProject: Project = { id: newId, name: projectName, tasks: [] };
 
     if (useSupabase && supabase) {
-        const { error } = await supabase.from('projects').insert({
-            id: newId,
-            name: projectName
-        });
+        const { error } = await supabase.from('projects').insert({ id: newId, name: projectName });
         if (error) throw error;
         return newProject;
     } else {
@@ -410,7 +479,6 @@ export const updateTask = async (projectId: string, taskId: string, taskUpdate: 
 
         const { error } = await supabase.from('tasks').update(updates).eq('id', taskId);
         if (error) throw error;
-        // NOTE: We return the update object mixed with ID. The caller MUST merge this with existing state.
         return { id: taskId, ...taskUpdate } as Task;
     } else {
         const data = readLocalData();
@@ -459,11 +527,9 @@ export const getRemoteSettings = async (key: string): Promise<any> => {
             .select('value')
             .eq('key', key)
             .single();
-        
         if (error) return null;
         return data?.value;
     } catch (e) {
-        console.error("Error fetching remote settings", e);
         return null;
     }
 };
@@ -471,18 +537,9 @@ export const getRemoteSettings = async (key: string): Promise<any> => {
 export const saveRemoteSettings = async (key: string, value: any): Promise<void> => {
     if (!useSupabase || !supabase) return;
     try {
-        const { error } = await supabase
-            .from('system_settings')
-            .upsert({ key, value });
-        
-        if (error) {
-             // 42P01: undefined_table
-            if (error.code === '42P01') return;
-            console.error("Error saving remote settings", error);
-        }
-    } catch (e) {
-        console.error("Error saving remote settings", e);
-    }
+        const { error } = await supabase.from('system_settings').upsert({ key, value });
+        if (error && error.code === '42P01') return;
+    } catch (e) {}
 };
 
 // --- Seed & Check Functions ---
@@ -490,70 +547,58 @@ export const saveRemoteSettings = async (key: string, value: any): Promise<void>
 const seedDatabase = async () => {
     if (!supabase) return;
     
-    // Initial Data
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    
-    const p1 = { id: 'p1', name: '쿼터별 웹사이트 리디자인' };
-    
-    const tasks = [
-        { 
-            id: 't1', 
-            project_id: 'p1', 
-            name: 'API 설계 및 개발', 
-            start_date: addDays(today, 1).toISOString().split('T')[0], 
-            end_date: addDays(today, 10).toISOString().split('T')[0], 
-            color: 'bg-blue-500', 
-            employee_id: 'e1', 
-            progress: 80, 
-            description: '백엔드 API 엔드포인트.' 
-        },
-        { 
-            id: 't2', 
-            project_id: 'p1', 
-            name: '프론트엔드 UI/UX 구현', 
-            start_date: addDays(today, 2).toISOString().split('T')[0], 
-            end_date: addDays(today, 12).toISOString().split('T')[0], 
-            color: 'bg-sky-500', 
-            employee_id: 'e2', 
-            progress: 50, 
-            description: 'React 컴포넌트 개발.' 
-        },
-        { 
-            id: 't3', 
-            project_id: 'p1', 
-            name: '사용자 피드백 수집', 
-            start_date: addDays(today, 13).toISOString().split('T')[0], 
-            end_date: addDays(today, 20).toISOString().split('T')[0], 
-            color: 'bg-purple-500', 
-            employee_id: 'e5', 
-            progress: 25, 
-            description: '사용성 테스트 진행.' 
-        }
-    ];
+    // 1. Seed Departments
+    const { error: dError } = await supabase.from('departments').insert(defaultDepartments.map(d => ({ id: d.id, name: d.name })));
+    if (dError) { 
+        if(dError.code === '42P01') throw new Error('TABLES_MISSING'); 
+        console.error('Dept Seed Error', dError);
+    }
 
-    // Insert Project
-    const { error: pError } = await supabase.from('projects').insert(p1);
-    if (pError) throw pError;
+    // 2. Seed Employees
+    const { error: eError } = await supabase.from('employees').insert(defaultEmployees.map(e => ({ id: e.id, name: e.name, department_id: e.departmentId })));
+    if (eError) console.error('Emp Seed Error', eError);
 
-    // Insert Tasks
-    const { error: tError } = await supabase.from('tasks').insert(tasks);
-    if (tError) throw tError;
+    // 3. Seed Projects & Tasks
+    const initialData = getInitialData();
+    const p1 = initialData.projects[0];
+    const { error: pError } = await supabase.from('projects').insert({ id: p1.id, name: p1.name });
+    if (pError) console.error('Proj Seed Error', pError);
+
+    // Map tasks to database format
+    const dbTasks = p1.tasks.map(t => ({
+        id: t.id,
+        project_id: p1.id,
+        name: t.name,
+        start_date: t.startDate.toISOString().split('T')[0],
+        end_date: t.endDate.toISOString().split('T')[0],
+        color: t.color,
+        employee_id: t.employeeId,
+        progress: t.progress,
+        description: t.description
+    }));
+
+    const { error: tError } = await supabase.from('tasks').insert(dbTasks);
+    if (tError) console.error('Task Seed Error', tError);
 };
 
 export const checkConnectionAndSeed = async () => {
     if (!useSupabase || !supabase) return;
 
     try {
-        // Check if table exists and has data
+        // Check projects table existence
         const { data, error } = await supabase.from('projects').select('id').limit(1);
         
         if (error) {
-            // 42P01 is PostgreSQL error for undefined table
             if (error.code === '42P01') {
                 throw new Error('TABLES_MISSING');
             }
             throw error;
+        }
+
+        // Also check if departments exist (migrations)
+        const { error: dCheckError } = await supabase.from('departments').select('id').limit(1);
+        if (dCheckError && dCheckError.code === '42P01') {
+             throw new Error('TABLES_MISSING'); // Departments table missing
         }
 
         if (data.length === 0) {
@@ -569,20 +614,23 @@ export const checkConnectionAndSeed = async () => {
 export const subscribeToChanges = (callback: () => void) => {
     if (!useSupabase || !supabase) return () => {};
 
-    const channel = supabase.channel('schema-db-changes')
+    console.log("Initializing Realtime Subscription...");
+
+    const channel = supabase.channel('db-changes')
         .on(
             'postgres_changes',
-            { event: '*', schema: 'public', table: 'projects' },
-            () => callback()
+            { event: '*', schema: 'public' },
+            (payload) => {
+                console.log('Realtime Change Detected:', payload.eventType, payload.table);
+                callback();
+            }
         )
-        .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'tasks' },
-            () => callback()
-        )
-        .subscribe();
+        .subscribe((status) => {
+            console.log("Realtime Connection Status:", status);
+        });
 
     return () => {
+        console.log("Cleaning up Realtime Subscription...");
         supabase?.removeChannel(channel);
     };
 };
