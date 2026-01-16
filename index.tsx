@@ -396,9 +396,13 @@ const TaskModal: FC<{
     const [duration, setDuration] = useState(1);
     const [description, setDescription] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    
+    // Fix: Only initialize state when modal opens
+    const prevIsOpenRef = useRef(false);
 
     useEffect(() => {
-        if (isOpen) {
+        // Only run initialization when modal transitions from closed to open
+        if (isOpen && !prevIsOpenRef.current) {
             if (task) {
                 setName(task.name);
                 setEmployeeId(task.employeeId);
@@ -422,6 +426,7 @@ const TaskModal: FC<{
                 setDescription('');
             }
         }
+        prevIsOpenRef.current = isOpen;
     }, [isOpen, task, employees, departments]);
 
     // Handle department change -> reset employee selection
@@ -510,7 +515,16 @@ const ProjectModal: FC<{
 }> = ({ isOpen, onClose, onSubmit, project }) => {
     const [name, setName] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    useEffect(() => { if (isOpen) setName(project?.name || ''); }, [isOpen, project]);
+    
+    // Fix: Only initialize state when modal opens
+    const prevIsOpenRef = useRef(false);
+
+    useEffect(() => { 
+        if (isOpen && !prevIsOpenRef.current) {
+            setName(project?.name || ''); 
+        }
+        prevIsOpenRef.current = isOpen;
+    }, [isOpen, project]);
     
     const handleSubmit = async (e: React.FormEvent) => { 
         e.preventDefault(); 
@@ -573,7 +587,7 @@ const ConfirmationModal: FC<{
 };
 
 // --- Main Components ---
-// ... (Header, TimelineHeader, TaskBar, ProjectBar, TimelineGridBackground, GanttView unchanged)
+
 const Header: FC<{
     departments: Department[];
     filter: { departmentId: string; employeeId: string };
@@ -841,7 +855,7 @@ const GanttView: FC<{
     const [isMobile, setIsMobile] = useState(false);
     useEffect(() => { const checkMobile = () => setIsMobile(window.innerWidth < 768); checkMobile(); window.addEventListener('resize', checkMobile); return () => window.removeEventListener('resize', checkMobile); }, []);
     const visibleColumnWidths = useMemo<typeof DEFAULT_COLUMN_WIDTHS>(() => isMobile ? { project: Math.max(140, columnWidths.project * 0.7), department: 0, author: 0, progress: 0 } : columnWidths, [isMobile, columnWidths]);
-    const sidebarWidth = useMemo<number>(() => (Object.values(visibleColumnWidths) as number[]).reduce((sum, width) => sum + width, 0), [visibleColumnWidths]);
+    const sidebarWidth = (Object.values(visibleColumnWidths) as number[]).reduce((sum, width) => sum + width, 0);
     const timelineWidth: number = timelineDates.length * uiSettings.dayWidth;
 
     const handleResizeMouseDown = (e: React.MouseEvent, columnKey: keyof typeof columnWidths) => {
