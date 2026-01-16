@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, FC, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import ReactDOM from 'react-dom/client';
@@ -10,7 +9,7 @@ import { ChevronLeftIcon, ChevronRightIcon, CalendarIcon, FilterIcon, PlusIcon, 
 // Settings Constants Keys
 const SETTINGS_KEY = 'gantt-ui-settings-v2';
 const GANTT_COLUMN_WIDTHS_KEY = 'ganttColumnWidths';
-const NUMBER_OF_DAYS_IN_VIEW = 30;
+const MIN_DAYS_IN_VIEW = 30; // Changed from fixed constant to minimum value
 const MIN_COLUMN_WIDTH = 50;
 
 interface UISettings {
@@ -680,7 +679,9 @@ const TaskBar: FC<{
     const durationDays = getDaysBetween(startDate, endDate);
     const left = startOffsetDays * dayWidth;
     const width = durationDays * dayWidth - 4;
-    if (left + width < 0 || left > NUMBER_OF_DAYS_IN_VIEW * dayWidth) return null;
+    // Remove fixed limit check to allow infinite scrolling if implemented, 
+    // but for now we just check if it's completely off-screen to the left
+    if (left + width < 0) return null;
 
     const employee = employeeMap.get(task.employeeId);
     const department = employee ? departmentMap.get(employee.departmentId) : undefined;
@@ -755,7 +756,8 @@ const ProjectBar: FC<{ project: Project; viewStartDate: Date; dayWidth: number; 
     const durationDays = getDaysBetween(projectStartDate, projectEndDate);
     const left = startOffsetDays * dayWidth;
     const width = durationDays * dayWidth - 4;
-    if (left + width < 0 || left > NUMBER_OF_DAYS_IN_VIEW * dayWidth) return null;
+    // Removed strict max-width check
+    if (left + width < 0) return null;
 
     const textOffset = `max(0px, calc(var(--gantt-scroll-left, 0px) - ${left}px))`;
     const visibleBarWidth = `calc(${width}px - ${textOffset})`;
@@ -838,13 +840,13 @@ const GanttView: FC<{
     const [scrollLeft, setScrollLeft] = useState(0);
     const [isMobile, setIsMobile] = useState(false);
     useEffect(() => { const checkMobile = () => setIsMobile(window.innerWidth < 768); checkMobile(); window.addEventListener('resize', checkMobile); return () => window.removeEventListener('resize', checkMobile); }, []);
-    const visibleColumnWidths = useMemo(() => isMobile ? { project: Math.max(140, columnWidths.project * 0.7), department: 0, author: 0, progress: 0 } : columnWidths, [isMobile, columnWidths]);
-    const sidebarWidth = useMemo(() => (Object.values(visibleColumnWidths) as number[]).reduce((sum, width) => sum + width, 0), [visibleColumnWidths]);
-    const timelineWidth = timelineDates.length * uiSettings.dayWidth;
+    const visibleColumnWidths = useMemo<typeof DEFAULT_COLUMN_WIDTHS>(() => isMobile ? { project: Math.max(140, columnWidths.project * 0.7), department: 0, author: 0, progress: 0 } : columnWidths, [isMobile, columnWidths]);
+    const sidebarWidth = useMemo<number>(() => (Object.values(visibleColumnWidths) as number[]).reduce((sum, width) => sum + width, 0), [visibleColumnWidths]);
+    const timelineWidth: number = timelineDates.length * uiSettings.dayWidth;
 
     const handleResizeMouseDown = (e: React.MouseEvent, columnKey: keyof typeof columnWidths) => {
         if (isMobile) return; e.preventDefault(); e.stopPropagation();
-        const startX = e.clientX; const startWidth = columnWidths[columnKey];
+        const startX = e.clientX; const startWidth: number = columnWidths[columnKey];
         const handleMouseMove = (mv: MouseEvent) => setColumnWidths(prev => ({ ...prev, [columnKey]: Math.max(MIN_COLUMN_WIDTH, startWidth + (mv.clientX - startX)) }));
         const handleMouseUp = () => { document.removeEventListener('mousemove', handleMouseMove); document.removeEventListener('mouseup', handleMouseUp); };
         document.addEventListener('mousemove', handleMouseMove); document.addEventListener('mouseup', handleMouseUp);
@@ -935,6 +937,7 @@ const App: FC = () => {
     const [departments, setDepartments] = useState<Department[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [filter, setFilter] = useState({ departmentId: 'all', employeeId: 'all' });
+    const [daysInView, setDaysInView] = useState(MIN_DAYS_IN_VIEW);
     
     // Theme State
     const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -976,7 +979,7 @@ const App: FC = () => {
         const saved = localStorage.getItem(SETTINGS_KEY);
         return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
     });
-    const [columnWidths, setColumnWidths] = useState(() => {
+    const [columnWidths, setColumnWidths] = useState<typeof DEFAULT_COLUMN_WIDTHS>(() => {
         const saved = localStorage.getItem(GANTT_COLUMN_WIDTHS_KEY);
         return saved ? JSON.parse(saved) : DEFAULT_COLUMN_WIDTHS;
     });
@@ -990,16 +993,41 @@ const App: FC = () => {
     
     const [isOnline, setIsOnline] = useState(isSupabaseEnabled());
 
+    // Calculate dynamic number of days based on width
+    useEffect(() => {
+        const handleResize = () => {
+            const isMobile = window.innerWidth < 768;
+            const currentColumnWidths = isMobile
+                ? { project: Math.max(140, columnWidths.project * 0.7), department: 0, author: 0, progress: 0 }
+                : columnWidths;
+            const sidebarWidth = Object.values(currentColumnWidths).reduce((sum, w) => sum + w, 0);
+            
+            // Calculate available width for timeline (Total width - sidebar - padding)
+            const availableWidth = window.innerWidth - sidebarWidth - 40; // 40px buffer for padding/margins
+            
+            // Calculate how many days fit
+            const calculatedDays = Math.ceil(availableWidth / uiSettings.dayWidth) + 5; // Add extra buffer columns
+            
+            setDaysInView(Math.max(MIN_DAYS_IN_VIEW, calculatedDays));
+        };
+
+        // Initial calculation
+        handleResize();
+
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, [columnWidths, uiSettings.dayWidth]);
+
     // Computed
     const todayString = formatDate(new Date());
     
     const timelineDates = useMemo(() => {
         const dates = [];
-        for (let i = 0; i < NUMBER_OF_DAYS_IN_VIEW; i++) {
+        for (let i = 0; i < daysInView; i++) {
             dates.push(addDays(viewStartDate, i));
         }
         return dates;
-    }, [viewStartDate]);
+    }, [viewStartDate, daysInView]);
 
     // Initial Data Load
     const loadData = useCallback(async () => {
