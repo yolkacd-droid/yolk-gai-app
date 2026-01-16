@@ -1,0 +1,6 @@
+{
+  "name": "일정관리 계획표",
+  "description": "부서 및 직원별로 일정을 시각화하고 관리할 수 있는 협업용 간트 차트 애플리케이션입니다.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

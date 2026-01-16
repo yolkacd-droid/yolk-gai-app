@@ -1,0 +1,20 @@
+
+{
+  "name": "team-schedule-gantt-chart",
+  "version": "1.0.0",
+  "description": "부서 및 직원별로 일정을 시각화하고 관리할 수 있는 협업용 간트 차트 애플리케이션입니다.",
+  "main": "index.js",
+  "scripts": {},
+  "keywords": [
+    "react",
+    "gantt",
+    "typescript",
+    "schedule"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "typescript": "^5.4.5"
+  }
+}
