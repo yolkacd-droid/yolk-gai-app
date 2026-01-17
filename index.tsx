@@ -1,8 +1,9 @@
+
 import React, { useState, useMemo, useEffect, FC, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import ReactDOM from 'react-dom/client';
 import { Department, Employee, Task, Project } from './types';
-import { getProjects, getDepartments, getEmployees, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, updateProjects, initSupabase, getSupabaseConfig, isSupabaseEnabled, subscribeToChanges, checkConnectionAndSeed, hasAdminPassword, verifyAdminPassword, setAdminPassword, isGlobalConfigured, isGlobalPassword, initSupabaseFromUrl, getShareableConfigLink, getRemoteSettings, saveRemoteSettings, addDepartment, deleteDepartment, addEmployee, deleteEmployee } from './services/apiService';
+import { getProjects, getDepartments, getEmployees, addProject, updateProject, deleteProject, addTask, updateTask, deleteTask, updateProjects, updateTaskPositions, initSupabase, getSupabaseConfig, isSupabaseEnabled, subscribeToChanges, checkConnectionAndSeed, hasAdminPassword, verifyAdminPassword, setAdminPassword, isGlobalConfigured, isGlobalPassword, initSupabaseFromUrl, getShareableConfigLink, getRemoteSettings, saveRemoteSettings, addDepartment, deleteDepartment, addEmployee, deleteEmployee } from './services/apiService';
 import { addDays, getDaysBetween, formatDate } from './utils/dateUtils';
 import { ChevronLeftIcon, ChevronRightIcon, CalendarIcon, FilterIcon, PlusIcon, FolderIcon, ChevronDownIcon, XMarkIcon, PencilIcon, TrashIcon, GripVerticalIcon, SunIcon, MoonIcon } from './components/icons';
 
@@ -164,28 +165,46 @@ const SettingsModal: FC<SettingsModalProps> = ({ isOpen, onClose, settings, setS
 
     const copySql = () => {
         const sql = `
--- 1. 테이블 생성
-create table if not exists projects (id text primary key, name text, created_at timestamptz default now());
+-- 1. 테이블 생성 (기존에 없으면 생성)
+create table if not exists projects (id text primary key, name text, position int default 0, created_at timestamptz default now());
 create table if not exists departments (id text primary key, name text);
 create table if not exists employees (id text primary key, name text, department_id text references departments(id) on delete set null);
-create table if not exists tasks (id text primary key, name text, start_date text, end_date text, color text, employee_id text references employees(id), progress int, description text, project_id text references projects(id) on delete cascade);
+create table if not exists tasks (id text primary key, name text, start_date text, end_date text, color text, employee_id text references employees(id), progress int, description text, position int default 0, project_id text references projects(id) on delete cascade);
 create table if not exists system_settings (key text primary key, value jsonb);
 
--- 2. 실시간(Realtime) 복제 활성화 (필수)
--- 아래 명령어가 실행되어야만 다른 컴퓨터에서 변경 사항을 즉시 확인할 수 있습니다.
-alter publication supabase_realtime add table projects, tasks, departments, employees, system_settings;
+-- 2. 컬럼 마이그레이션 (기존에 테이블은 있지만 position 컬럼이 없는 경우 대응)
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='projects' AND column_name='position') THEN
+        ALTER TABLE projects ADD COLUMN position int DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='position') THEN
+        ALTER TABLE tasks ADD COLUMN position int DEFAULT 0;
+    END IF;
+END $$;
 
--- 3. Row Level Security (RLS) 설정 (선택사항: 공개 접근 허용)
--- RLS가 켜져있으면 정책이 없을 때 실시간 이벤트를 받지 못할 수 있습니다. 
--- 개발용으로 간단히 비활성화하거나 적절한 정책을 추가하세요.
-alter table projects disable row level security;
-alter table tasks disable row level security;
-alter table departments disable row level security;
-alter table employees disable row level security;
-alter table system_settings disable row level security;
+-- 3. 실시간(Realtime) 복제 활성화 (publication 존재 여부 체크 후 생성)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        CREATE PUBLICATION supabase_realtime FOR ALL TABLES;
+    ELSE
+        ALTER PUBLICATION supabase_realtime ADD TABLE projects, tasks, departments, employees, system_settings;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'Realtime publication setup skipped or already exists';
+END $$;
+
+-- 4. Row Level Security (RLS) 비활성화 (개발 편의를 위해 전체 공개 설정)
+ALTER TABLE projects DISABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks DISABLE ROW LEVEL SECURITY;
+ALTER TABLE departments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE employees DISABLE ROW LEVEL SECURITY;
+ALTER TABLE system_settings DISABLE ROW LEVEL SECURITY;
 `;
         navigator.clipboard.writeText(sql);
-        alert('SQL 쿼리가 클립보드에 복사되었습니다.\n\nSupabase 프로젝트의 SQL Editor에 붙여넣고 실행하세요.\n특히 "alter publication"과 "disable row level security" 부분이 실시간 동기화에 중요합니다.');
+        alert('SQL 쿼리가 클립보드에 복사되었습니다.\n\nSupabase 프로젝트의 SQL Editor에 붙여넣고 실행하세요.');
     };
 
     const handleAddDept = (e: React.FormEvent) => {
@@ -241,7 +260,7 @@ alter table system_settings disable row level security;
                                             <p className="text-xs text-gray-500">시스템 환경 변수(.env) 설정을 사용 중입니다.</p>
                                         </div>
                                     </div>
-                                    <button onClick={copySql} className="w-full py-2.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 text-xs font-bold rounded-lg transition-all border border-gray-300 dark:border-gray-600">초기 설정 및 실시간 활성화 SQL 복사</button>
+                                    <button onClick={copySql} className="w-full py-2.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 text-xs font-bold rounded-lg transition-all border border-gray-300 dark:border-gray-600">초기 설정 및 마이그레이션 SQL 복사</button>
                                 </div>
                             ) : (
                                 <>
@@ -397,7 +416,7 @@ const TaskModal: FC<{
     const [description, setDescription] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     
-    // Fix: Only initialize state when modal opens
+    // Track previous open state to only initialize on open
     const prevIsOpenRef = useRef(false);
 
     useEffect(() => {
@@ -515,8 +534,6 @@ const ProjectModal: FC<{
 }> = ({ isOpen, onClose, onSubmit, project }) => {
     const [name, setName] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    
-    // Fix: Only initialize state when modal opens
     const prevIsOpenRef = useRef(false);
 
     useEffect(() => { 
@@ -846,10 +863,12 @@ const GanttView: FC<{
     columnWidths: typeof DEFAULT_COLUMN_WIDTHS;
     setColumnWidths: React.Dispatch<React.SetStateAction<typeof DEFAULT_COLUMN_WIDTHS>>;
     onReorderProjects: (draggedId: string, targetId: string) => void;
+    onReorderTasks: (projectId: string, draggedId: string, targetId: string) => void;
     uiSettings: UISettings;
-}> = ({ projects, timelineDates, viewStartDate, todayString, employeeMap, departmentMap, expandedProjects, toggleProjectExpansion, onAddTaskClick, onAddProjectClick, onTaskProgressChange, onEditProject, onDeleteProject, onEditTask, onDeleteTask, columnWidths, setColumnWidths, onReorderProjects, uiSettings }) => {
+}> = ({ projects, timelineDates, viewStartDate, todayString, employeeMap, departmentMap, expandedProjects, toggleProjectExpansion, onAddTaskClick, onAddProjectClick, onTaskProgressChange, onEditProject, onDeleteProject, onEditTask, onDeleteTask, columnWidths, setColumnWidths, onReorderProjects, onReorderTasks, uiSettings }) => {
     
     const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
+    const [draggedTaskId, setDraggedTaskId] = useState<{pid: string, tid: string} | null>(null);
     const [dropTargetId, setDropTargetId] = useState<string | null>(null);
     const [scrollLeft, setScrollLeft] = useState(0);
     const [isMobile, setIsMobile] = useState(false);
@@ -894,11 +913,15 @@ const GanttView: FC<{
                         const totalProgress = project.tasks.reduce((sum, task) => sum + (task.progress || 0), 0);
                         const averageProgress = project.tasks.length > 0 ? Math.round(totalProgress / project.tasks.length) : 0;
                         return (
-                        <div key={project.id} className="relative">
+                        <div key={project.id} className="relative" onDragOver={e => e.preventDefault()} onDrop={e => {
+                            const pId = e.dataTransfer.getData('projectId');
+                            const targetPId = project.id;
+                            if (pId && pId !== targetPId) onReorderProjects(pId, targetPId);
+                        }}>
                             <div className={`flex items-center hover:bg-indigo-500/[0.03] group transition-all duration-300 border-b border-gray-200 dark:border-gray-800/40`} style={{ height: uiSettings.rowHeight }}>
                                 <div style={{ width: sidebarWidth, minWidth: sidebarWidth }} className="flex border-r border-gray-200 dark:border-gray-800 sticky left-0 z-10 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md h-full shadow-sm dark:shadow-2xl transition-colors">
                                     <div style={{ width: visibleColumnWidths.project }} className="flex items-center px-2 sm:px-5 text-sm font-black text-gray-800 dark:text-gray-100 truncate tracking-tight">
-                                        {!isMobile && <div draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', project.id); setDraggedProjectId(project.id); }} onDragEnd={() => {setDraggedProjectId(null); setDropTargetId(null);}} className="cursor-move p-1.5 -ml-2 mr-2 text-gray-400 hover:text-gray-900 dark:text-gray-600 dark:hover:text-white transition-colors"><GripVerticalIcon className="h-4 w-4" /></div>}
+                                        {!isMobile && <div draggable onDragStart={(e) => { e.dataTransfer.setData('projectId', project.id); setDraggedProjectId(project.id); }} onDragEnd={() => {setDraggedProjectId(null); setDropTargetId(null);}} className="cursor-move p-1.5 -ml-2 mr-2 text-gray-400 hover:text-gray-900 dark:text-gray-600 dark:hover:text-white transition-colors"><GripVerticalIcon className="h-4 w-4" /></div>}
                                         <div className="flex-grow flex items-center cursor-pointer truncate" onClick={() => toggleProjectExpansion(project.id)}>
                                             <ChevronDownIcon className={`h-3.5 w-3.5 mr-2 sm:mr-3 transition-transform duration-500 ${isExpanded ? 'rotate-0' : '-rotate-90 text-indigo-500 dark:text-indigo-400'}`} />
                                             <FolderIcon className="h-5 w-5 mr-2 sm:mr-3 text-indigo-500 shrink-0 opacity-80" />
@@ -924,9 +947,36 @@ const GanttView: FC<{
                                 const rightEdgePosition: number = left + width;
                                 if (task.progress === 100 && rightEdgePosition < scrollLeft) return null;
                                 return (
-                                    <div className="flex group border-b border-gray-200/50 dark:border-gray-800/20 last:border-0 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors" style={{ height: uiSettings.rowHeight }} key={task.id}>
+                                    <div 
+                                        className={`flex group border-b border-gray-200/50 dark:border-gray-800/20 last:border-0 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors ${draggedTaskId?.tid === task.id ? 'opacity-30' : ''}`} 
+                                        style={{ height: uiSettings.rowHeight }} 
+                                        key={task.id}
+                                        onDragOver={e => e.preventDefault()}
+                                        onDrop={e => {
+                                            e.stopPropagation();
+                                            const tId = e.dataTransfer.getData('taskId');
+                                            const pId = e.dataTransfer.getData('parentProjectId');
+                                            if (tId && pId === project.id && tId !== task.id) onReorderTasks(project.id, tId, task.id);
+                                        }}
+                                    >
                                         <div style={{ width: sidebarWidth, minWidth: sidebarWidth }} className="flex border-r border-gray-200 dark:border-gray-800 sticky left-0 z-10 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md shadow-sm dark:shadow-lg transition-colors">
-                                            <div style={{ width: visibleColumnWidths.project }} className="flex items-center px-4 pl-10 sm:pl-12 truncate cursor-pointer" onClick={() => onEditTask(task, project.id)}><p className="text-gray-600 dark:text-gray-400 font-bold truncate tracking-tight transition-colors group-hover:text-gray-900 dark:group-hover:text-white" style={{ fontSize: uiSettings.fontSize }}>{task.name}</p></div>
+                                            <div style={{ width: visibleColumnWidths.project }} className="flex items-center px-4 pl-12 sm:pl-14 truncate relative">
+                                                {!isMobile && (
+                                                    <div 
+                                                        draggable 
+                                                        onDragStart={(e) => { 
+                                                            e.dataTransfer.setData('taskId', task.id); 
+                                                            e.dataTransfer.setData('parentProjectId', project.id);
+                                                            setDraggedTaskId({pid: project.id, tid: task.id}); 
+                                                        }} 
+                                                        onDragEnd={() => setDraggedTaskId(null)}
+                                                        className="absolute left-4 cursor-move p-1 text-gray-300 hover:text-gray-900 dark:text-gray-700 dark:hover:text-gray-400 transition-colors opacity-0 group-hover:opacity-100"
+                                                    >
+                                                        <GripVerticalIcon className="h-3.5 w-3.5" />
+                                                    </div>
+                                                )}
+                                                <p className="text-gray-600 dark:text-gray-400 font-bold truncate tracking-tight transition-colors group-hover:text-gray-900 dark:group-hover:text-white cursor-pointer" style={{ fontSize: uiSettings.fontSize }} onClick={() => onEditTask(task, project.id)}>{task.name}</p>
+                                            </div>
                                             {visibleColumnWidths.department > 0 && <div style={{ width: visibleColumnWidths.department }} className="flex items-center px-5 border-l border-gray-200 dark:border-gray-800/30 truncate"><p className="text-gray-500 dark:text-gray-600 text-[10px] font-black uppercase tracking-wider truncate">{department?.name}</p></div>}
                                             {visibleColumnWidths.author > 0 && <div style={{ width: visibleColumnWidths.author }} className="flex items-center px-5 border-l border-gray-200 dark:border-gray-800/30 truncate"><p className="text-gray-500 text-[11px] font-bold truncate">{employee?.name}</p></div>}
                                             {visibleColumnWidths.progress > 0 && <div style={{ width: visibleColumnWidths.progress }} className="flex items-center justify-center px-5 border-l border-gray-200 dark:border-gray-800/30"><div className="flex items-center group-hover:hidden"><span className="text-[10px] font-black text-gray-500 dark:text-gray-600 tracking-tighter">{task.progress}%</span></div><div className="hidden items-center gap-2 group-hover:flex"><button onClick={(e) => { e.stopPropagation(); onEditTask(task, project.id); }} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-all"><PencilIcon className="h-4 w-4" /></button><button onClick={(e) => { e.stopPropagation(); onDeleteTask(task, project.id); }} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-red-500 dark:hover:text-red-400 transition-all"><TrashIcon className="h-4 w-4" /></button></div></div>}
@@ -987,6 +1037,7 @@ const App: FC = () => {
 
     const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
     const [isLoading, setIsLoading] = useState(true);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     // UI Settings
     const [uiSettings, setUiSettings] = useState<UISettings>(() => {
@@ -1014,6 +1065,7 @@ const App: FC = () => {
             const currentColumnWidths = isMobile
                 ? { project: Math.max(140, columnWidths.project * 0.7), department: 0, author: 0, progress: 0 }
                 : columnWidths;
+            // FIXED: Changed 'width' to correctly named accumulator variable 'w'
             const sidebarWidth = (Object.values(currentColumnWidths) as number[]).reduce((sum, w) => sum + w, 0);
             
             // Calculate available width for timeline (Total width - sidebar - padding)
@@ -1046,6 +1098,7 @@ const App: FC = () => {
     // Initial Data Load
     const loadData = useCallback(async () => {
         try {
+            setErrorMsg(null);
             const [loadedProjects, loadedDepartments, loadedEmployees] = await Promise.all([getProjects(), getDepartments(), getEmployees()]);
             setProjects(loadedProjects); setDepartments(loadedDepartments); setEmployees(loadedEmployees);
             setExpandedProjects(prev => {
@@ -1064,8 +1117,10 @@ const App: FC = () => {
             if (remoteColumnWidths) {
                 setColumnWidths(remoteColumnWidths);
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error("Failed to load data", e);
+            const msg = e && e.message ? e.message : (typeof e === 'string' ? e : JSON.stringify(e));
+            setErrorMsg(msg || "데이터를 불러오는 중 알 수 없는 오류가 발생했습니다.");
         } finally { setIsLoading(false); }
     }, []);
 
@@ -1098,13 +1153,13 @@ const App: FC = () => {
     const filteredProjects = useMemo(() => {
         if (filter.departmentId === 'all' && filter.employeeId === 'all') return projects;
         return projects.map(p => {
-             const filteredTasks = p.tasks.filter(t => {
+             const filteredTasks = p.tasks?.filter(t => {
                  const emp = employeeMap.get(t.employeeId);
-                 if (!emp) return false;
+                 if (!emp) return filter.departmentId === 'all' && filter.employeeId === 'all';
                  if (filter.departmentId !== 'all' && emp.departmentId !== filter.departmentId) return false;
                  if (filter.employeeId !== 'all' && emp.id !== filter.employeeId) return false;
                  return true;
-             });
+             }) || [];
              return { ...p, tasks: filteredTasks };
         }).filter(p => p.tasks.length > 0);
     }, [projects, filter, employeeMap]);
@@ -1129,6 +1184,7 @@ const App: FC = () => {
     // Handlers
     const handleSaveSupabase = async (url: string, key: string) => {
         setIsLoading(true);
+        setErrorMsg(null);
         initSupabase(url, key);
         setIsOnline(isSupabaseEnabled());
         
@@ -1145,10 +1201,12 @@ const App: FC = () => {
         } catch (e: any) {
             console.error(e);
             if (e.message === 'TABLES_MISSING') {
-                alert('데이터베이스 테이블이 없습니다. 설정 메뉴의 "1. SQL 스크립트 복사"를 눌러 Supabase SQL Editor에서 실행해주세요.');
+                alert('데이터베이스 테이블이 없습니다. 설정 메뉴의 "SQL 스크립트 복사"를 눌러 Supabase SQL Editor에서 실행해주세요.');
                 setIsSettingsOpen(true);
             } else {
-                alert('데이터베이스 연결 실패: ' + e.message);
+                const msg = e && e.message ? e.message : JSON.stringify(e);
+                alert('데이터베이스 연결 실패: ' + msg);
+                setErrorMsg(msg);
             }
         } finally {
             setIsLoading(false);
@@ -1253,11 +1311,37 @@ const App: FC = () => {
         const draggedIndex = projects.findIndex(p => p.id === draggedId);
         const targetIndex = projects.findIndex(p => p.id === targetId);
         if (draggedIndex === -1 || targetIndex === -1) return;
+        
         const newProjects = [...projects];
         const [removed] = newProjects.splice(draggedIndex, 1);
         newProjects.splice(targetIndex, 0, removed);
+        
         setProjects(newProjects);
+        // 서버에 새 순서 영구 저장
         await updateProjects(newProjects);
+    };
+
+    const handleReorderTasks = async (projectId: string, draggedId: string, targetId: string) => {
+        const targetProjectIndex = projects.findIndex(p => p.id === projectId);
+        if (targetProjectIndex === -1) return;
+        
+        const project = projects[targetProjectIndex];
+        const newTasks = [...project.tasks];
+        const draggedIdx = newTasks.findIndex(t => t.id === draggedId);
+        const targetIdx = newTasks.findIndex(t => t.id === targetId);
+        
+        if (draggedIdx === -1 || targetIdx === -1) return;
+        
+        const [removed] = newTasks.splice(draggedIdx, 1);
+        newTasks.splice(targetIdx, 0, removed);
+        
+        // 상태 업데이트
+        const newProjects = [...projects];
+        newProjects[targetProjectIndex] = { ...project, tasks: newTasks };
+        setProjects(newProjects);
+        
+        // 서버에 새 순서 영구 저장 (오프라인/온라인 모두 대응)
+        await updateTaskPositions(projectId, newTasks);
     };
 
     const handleOpenSettings = () => {
@@ -1268,7 +1352,34 @@ const App: FC = () => {
         }
     };
 
-    if (isLoading) return <div className="bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen flex flex-col items-center justify-center font-sans tracking-tight transition-colors"><div className="w-16 h-16 border-[6px] border-indigo-600 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_40px_rgba(79,70,229,0.4)]" /><div className="text-2xl font-black animate-pulse text-indigo-600 dark:text-indigo-300 tracking-tighter uppercase">DAHYUN GANTT IS LOADING...</div></div>;
+    if (isLoading) {
+        return (
+            <div className="bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen flex flex-col items-center justify-center font-sans tracking-tight transition-colors">
+                {errorMsg ? (
+                    <div className="max-w-md w-full bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-2xl border border-red-500/20 flex flex-col items-center text-center gap-6">
+                        <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-600 dark:text-red-400">
+                             <XMarkIcon className="w-8 h-8" />
+                        </div>
+                        <div>
+                            <h2 className="text-xl font-black mb-2">데이터 로드 실패</h2>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed font-medium">
+                                {errorMsg}
+                            </p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 w-full">
+                            <button onClick={() => window.location.reload()} className="py-3 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl font-bold transition-all">다시 시도</button>
+                            <button onClick={() => { setIsLoading(false); setIsSettingsOpen(true); }} className="py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-lg shadow-indigo-500/20">설정 열기</button>
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                        <div className="w-16 h-16 border-[6px] border-indigo-600 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_40px_rgba(79,70,229,0.4)]" />
+                        <div className="text-2xl font-black animate-pulse text-indigo-600 dark:text-indigo-300 tracking-tighter uppercase">DAHYUN GANTT IS LOADING...</div>
+                    </>
+                )}
+            </div>
+        );
+    }
 
     return (
         <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-200 overflow-hidden font-sans selection:bg-indigo-500/30 transition-colors duration-300">
@@ -1303,6 +1414,7 @@ const App: FC = () => {
                     columnWidths={columnWidths}
                     setColumnWidths={setColumnWidths}
                     onReorderProjects={handleReorderProjects}
+                    onReorderTasks={handleReorderTasks}
                     uiSettings={uiSettings}
                 />
             </main>

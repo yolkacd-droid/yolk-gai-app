@@ -1,4 +1,3 @@
-
 import { Project, Task, Department, Employee } from '../types';
 import { addDays } from '../utils/dateUtils';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -49,38 +48,13 @@ const GLOBAL_SUPABASE_URL = cleanEnv(VITE_ENV_URL || getProcessEnv("SUPABASE_URL
 const GLOBAL_SUPABASE_KEY = cleanEnv(VITE_ENV_KEY || getProcessEnv("SUPABASE_KEY") || FALLBACK_KEY);
 const GLOBAL_ADMIN_PASSWORD = cleanEnv(VITE_ENV_PASSWORD || getProcessEnv("ADMIN_PASSWORD") || FALLBACK_PWD);
 
-console.log("Environment Config Load:", {
-    URL_CONFIGURED: !!GLOBAL_SUPABASE_URL,
-    KEY_CONFIGURED: !!GLOBAL_SUPABASE_KEY,
-    PWD_CONFIGURED: !!GLOBAL_ADMIN_PASSWORD,
-    USING_FALLBACK: !VITE_ENV_URL && !getProcessEnv("SUPABASE_URL")
-});
-
-// --- Initial Data Defaults (Used for seeding only) ---
-const today = new Date();
-today.setHours(0, 0, 0, 0);
-
-const defaultEmployees: Employee[] = [
-  { id: 'e1', name: '앨리스 존슨', departmentId: 'd1' },
-  { id: 'e2', name: '밥 윌리엄스', departmentId: 'd1' },
-  { id: 'e3', name: '찰리 브라운', departmentId: 'd2' },
-  { id: 'e4', name: '다이아나 밀러', departmentId: 'd2' },
-  { id: 'e5', name: '이든 데이비스', departmentId: 'd3' },
-];
-
-const defaultDepartments: Department[] = [
-  { id: 'd1', name: '엔지니어링', employees: [] },
-  { id: 'd2', name: '마케팅', employees: [] },
-  { id: 'd3', name: '제품', employees: [] },
-];
-
 // --- Supabase Client Management ---
 let supabase: SupabaseClient | null = null;
 let useSupabase = false;
 
 export const initSupabase = (url: string, key: string) => {
-    const targetUrl = GLOBAL_SUPABASE_URL || url;
-    const targetKey = GLOBAL_SUPABASE_KEY || key;
+    const targetUrl = url || GLOBAL_SUPABASE_URL;
+    const targetKey = key || GLOBAL_SUPABASE_KEY;
 
     if (targetUrl && targetKey) {
         try {
@@ -170,108 +144,93 @@ interface AppData {
 }
 
 function getInitialData(): AppData {
-    // Merge default employees into default departments for local storage structure
-    const hydratedDepts = defaultDepartments.map(d => ({
-        ...d,
-        employees: defaultEmployees.filter(e => e.departmentId === d.id)
-    }));
-
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     return {
         projects: [
             {
                 id: 'p1',
-                name: '쿼터별 웹사이트 리디자인',
+                name: '샘플 프로젝트',
                 tasks: [
-                    { id: 't1', name: 'API 설계 및 개발', startDate: addDays(today, 1), endDate: addDays(today, 10), color: 'bg-blue-500', employeeId: 'e1', progress: 80, description: '백엔드 API 엔드포인트.' },
-                    { id: 't2', name: '프론트엔드 UI/UX 구현', startDate: addDays(today, 2), endDate: addDays(today, 12), color: 'bg-sky-500', employeeId: 'e2', progress: 50, description: 'React 컴포넌트 개발.' },
-                    { id: 't3', name: '사용자 피드백 수집', startDate: addDays(today, 13), endDate: addDays(today, 20), color: 'bg-purple-500', employeeId: 'e5', progress: 25, description: '사용성 테스트 진행.' },
+                    { id: 't1', name: '예시 태스크', startDate: addDays(today, 1), endDate: addDays(today, 10), color: 'bg-blue-500', employeeId: '', progress: 0 },
                 ],
             }
         ],
-        departments: hydratedDepts,
-        employees: defaultEmployees,
+        departments: [],
+        employees: [],
     };
 }
 
 function readLocalData(): AppData {
     try {
         const rawData = localStorage.getItem(DATA_KEY);
-        if (!rawData) {
-            const initialData = getInitialData();
-            writeLocalData(initialData);
-            return initialData;
-        }
+        if (!rawData) return getInitialData();
         const parsedData = JSON.parse(rawData);
-        
-        // Structure Check
-        if (!parsedData || !Array.isArray(parsedData.projects)) {
-             const initialData = getInitialData();
-             writeLocalData(initialData);
-             return initialData;
-        }
-
-        // Ensure date objects
         if (parsedData.projects) {
             parsedData.projects.forEach((p: Project) => {
-                if(p.tasks) {
-                    p.tasks.forEach((t: Task) => {
-                        t.startDate = new Date(t.startDate);
-                        t.endDate = new Date(t.endDate);
-                    });
-                } else {
-                    p.tasks = [];
-                }
+                p.tasks?.forEach((t: Task) => {
+                    t.startDate = new Date(t.startDate);
+                    t.endDate = new Date(t.endDate);
+                });
             });
         }
-        
-        // Ensure employees/departments exist if migrating from old version
-        if (!parsedData.departments) parsedData.departments = getInitialData().departments;
-        if (!parsedData.employees) parsedData.employees = getInitialData().employees;
-
         return parsedData;
-    } catch (error) {
-        console.error("Failed to read local data", error);
-        return getInitialData();
-    }
+    } catch { return getInitialData(); }
 }
 
 function writeLocalData(data: AppData) {
     localStorage.setItem(DATA_KEY, JSON.stringify(data));
 }
 
+// Robust column error identification
+const isMissingColumnError = (error: any, columnName: string) => {
+    if (!error) return false;
+    // Postgres error code for undefined_column is 42703
+    if (error.code === '42703') return true;
+    const msg = String(error.message || "").toLowerCase();
+    const col = columnName.toLowerCase();
+    return msg.includes('column') && msg.includes(col);
+};
+
+const stringifyError = (err: any) => {
+    if (typeof err === 'string') return err;
+    if (err && err.message) return err.message;
+    try { return JSON.stringify(err); } catch { return String(err); }
+};
+
 // --- API Functions (Hybrid) ---
 
 export const getProjects = async (): Promise<Project[]> => {
     if (useSupabase && supabase) {
         try {
-            const { data: projectsData, error: pError } = await supabase
+            let projectsData: any[] = [];
+            
+            // Try sorting by position first
+            const { data, error: pError } = await supabase
                 .from('projects')
                 .select('*')
+                .order('position', { ascending: true })
                 .order('created_at', { ascending: true });
-            if (pError) throw pError;
+            
+            if (pError) {
+                if (isMissingColumnError(pError, 'position')) {
+                    console.warn("Table 'projects' missing 'position' column. Falling back to 'created_at'.");
+                    const { data: fallbackData, error: fError } = await supabase
+                        .from('projects')
+                        .select('*')
+                        .order('created_at', { ascending: true });
+                    if (fError) throw fError;
+                    projectsData = fallbackData || [];
+                } else {
+                    throw pError;
+                }
+            } else {
+                projectsData = data || [];
+            }
 
-            const { data: tasksData, error: tError } = await supabase.from('tasks').select('*');
-            if (tError) throw tError;
-
-            const projects: Project[] = (projectsData || []).map((p: any) => ({
-                id: p.id,
-                name: p.name,
-                tasks: (tasksData || [])
-                    .filter((t: any) => t.project_id === p.id)
-                    .map((t: any) => ({
-                        id: t.id,
-                        name: t.name,
-                        startDate: new Date(t.start_date),
-                        endDate: new Date(t.end_date),
-                        color: t.color,
-                        employeeId: t.employee_id,
-                        progress: t.progress,
-                        description: t.description
-                    }))
-            }));
-            return projects;
+            return fetchTasksForProjects(projectsData);
         } catch (err: any) {
-            console.error("Supabase fetch error (getProjects):", err.message || JSON.stringify(err));
+            console.error("Supabase fetch error (getProjects):", stringifyError(err));
             throw err;
         }
     } else {
@@ -279,16 +238,59 @@ export const getProjects = async (): Promise<Project[]> => {
     }
 };
 
+async function fetchTasksForProjects(projectsData: any[]): Promise<Project[]> {
+    if (!supabase) return [];
+    
+    let tasksData: any[] = [];
+    
+    // Try sorting by position first
+    const { data, error: tError } = await supabase
+        .from('tasks')
+        .select('*')
+        .order('position', { ascending: true })
+        .order('id', { ascending: true });
+        
+    if (tError) {
+        if (isMissingColumnError(tError, 'position')) {
+            console.warn("Table 'tasks' missing 'position' column. Falling back to 'id'.");
+            const { data: fallbackData, error: fError } = await supabase
+                .from('tasks')
+                .select('*')
+                .order('id', { ascending: true });
+            if (fError) throw fError;
+            tasksData = fallbackData || [];
+        } else {
+            throw tError;
+        }
+    } else {
+        tasksData = data || [];
+    }
+
+    return (projectsData || []).map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        tasks: (tasksData || [])
+            .filter((t: any) => t.project_id === p.id)
+            .map((t: any) => ({
+                id: t.id,
+                name: t.name,
+                startDate: new Date(t.start_date),
+                endDate: new Date(t.end_date),
+                color: t.color,
+                employeeId: t.employee_id,
+                progress: t.progress,
+                description: t.description
+            }))
+    }));
+}
+
 export const getDepartments = async (): Promise<Department[]> => {
     if (useSupabase && supabase) {
         try {
             const { data: depts, error } = await supabase.from('departments').select('*').order('name');
             if (error) throw error;
-            
             const { data: emps, error: eError } = await supabase.from('employees').select('*');
             if (eError) throw eError;
-
-            // Map employees into departments
             return (depts || []).map((d: any) => ({
                 id: d.id,
                 name: d.name,
@@ -298,9 +300,9 @@ export const getDepartments = async (): Promise<Department[]> => {
                     departmentId: e.department_id
                 }))
             }));
-        } catch (err: any) {
-            console.error("Supabase fetch error (getDepartments):", err.message || JSON.stringify(err));
-            throw err;
+        } catch (err: any) { 
+            console.error("Supabase fetch error (getDepartments):", stringifyError(err));
+            throw err; 
         }
     } else {
         return readLocalData().departments;
@@ -312,36 +314,27 @@ export const getEmployees = async (): Promise<Employee[]> => {
         try {
             const { data, error } = await supabase.from('employees').select('*').order('name');
             if (error) throw error;
-            return (data || []).map((e: any) => ({
-                id: e.id,
-                name: e.name,
-                departmentId: e.department_id
-            }));
-        } catch (err: any) {
-            console.error("Supabase fetch error (getEmployees):", err.message || JSON.stringify(err));
-            throw err;
+            return (data || []).map((e: any) => ({ id: e.id, name: e.name, departmentId: e.department_id }));
+        } catch (err: any) { 
+            console.error("Supabase fetch error (getEmployees):", stringifyError(err));
+            throw err; 
         }
     } else {
         return readLocalData().employees;
     }
 };
 
-// --- Organization Management (CRUD) ---
-
 export const addDepartment = async (name: string): Promise<Department> => {
-    const newId = `dept-${Date.now()}`;
-    const newDept: Department = { id: newId, name, employees: [] };
-
+    const id = `dept-${Date.now()}`;
     if (useSupabase && supabase) {
-        const { error } = await supabase.from('departments').insert({ id: newId, name });
+        const { error } = await supabase.from('departments').insert({ id, name });
         if (error) throw error;
-        return newDept;
     } else {
         const data = readLocalData();
-        data.departments.push(newDept);
+        data.departments.push({ id, name, employees: [] });
         writeLocalData(data);
-        return newDept;
     }
+    return { id, name, employees: [] };
 };
 
 export const deleteDepartment = async (id: string): Promise<void> => {
@@ -351,32 +344,21 @@ export const deleteDepartment = async (id: string): Promise<void> => {
     } else {
         const data = readLocalData();
         data.departments = data.departments.filter(d => d.id !== id);
-        // Also remove employees in this dept or move them? For now, we assume local implementation cascades or filters out
-        data.employees = data.employees.filter(e => e.departmentId !== id);
         writeLocalData(data);
     }
 };
 
 export const addEmployee = async (name: string, departmentId: string): Promise<Employee> => {
-    const newId = `emp-${Date.now()}`;
-    const newEmp: Employee = { id: newId, name, departmentId };
-
+    const id = `emp-${Date.now()}`;
     if (useSupabase && supabase) {
-        const { error } = await supabase.from('employees').insert({ 
-            id: newId, 
-            name, 
-            department_id: departmentId 
-        });
+        const { error } = await supabase.from('employees').insert({ id, name, department_id: departmentId });
         if (error) throw error;
-        return newEmp;
     } else {
         const data = readLocalData();
-        data.employees.push(newEmp);
-        const dept = data.departments.find(d => d.id === departmentId);
-        if (dept) dept.employees.push(newEmp);
+        data.employees.push({ id, name, departmentId });
         writeLocalData(data);
-        return newEmp;
     }
+    return { id, name, departmentId };
 };
 
 export const deleteEmployee = async (id: string): Promise<void> => {
@@ -386,46 +368,34 @@ export const deleteEmployee = async (id: string): Promise<void> => {
     } else {
         const data = readLocalData();
         data.employees = data.employees.filter(e => e.id !== id);
-        data.departments.forEach(d => {
-            d.employees = d.employees.filter(e => e.id !== id);
-        });
         writeLocalData(data);
     }
 };
 
-// --- Project/Task CRUD ---
-
 export const addProject = async (projectName: string): Promise<Project> => {
-    const newId = `project-${Date.now()}`;
-    const newProject: Project = { id: newId, name: projectName, tasks: [] };
-
+    const id = `project-${Date.now()}`;
     if (useSupabase && supabase) {
-        const { error } = await supabase.from('projects').insert({ id: newId, name: projectName });
+        const { error } = await supabase.from('projects').insert({ id, name: projectName, position: 999 });
         if (error) throw error;
-        return newProject;
     } else {
         const data = readLocalData();
-        data.projects.push(newProject);
+        data.projects.push({ id, name: projectName, tasks: [] });
         writeLocalData(data);
-        return newProject;
     }
+    return { id, name: projectName, tasks: [] };
 };
 
 export const updateProject = async (projectId: string, projectName: string): Promise<Project> => {
     if (useSupabase && supabase) {
         const { error } = await supabase.from('projects').update({ name: projectName }).eq('id', projectId);
         if (error) throw error;
-        return { id: projectId, name: projectName, tasks: [] };
     } else {
         const data = readLocalData();
-        const project = data.projects.find(p => p.id === projectId);
-        if (project) {
-            project.name = projectName;
-            writeLocalData(data);
-            return project;
-        }
-        throw new Error("Project not found");
+        const p = data.projects.find(x => x.id === projectId);
+        if (p) p.name = projectName;
+        writeLocalData(data);
     }
+    return { id: projectId, name: projectName, tasks: [] };
 };
 
 export const deleteProject = async (projectId: string): Promise<{ id: string }> => {
@@ -441,43 +411,32 @@ export const deleteProject = async (projectId: string): Promise<{ id: string }> 
 };
 
 export const addTask = async (projectId: string, taskData: Omit<Task, 'id' | 'color' | 'progress'>): Promise<Task> => {
-    const colors = ['bg-rose-500', 'bg-amber-500', 'bg-lime-500', 'bg-cyan-500', 'bg-fuchsia-500', 'bg-orange-500'];
-    const randomColor = colors[Math.floor(Math.random() * colors.length)];
-    const newTask: Task = {
-        id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        ...taskData,
-        color: randomColor,
-        progress: 0,
-    };
-
+    const id = `task-${Date.now()}`;
+    const color = 'bg-blue-500';
     if (useSupabase && supabase) {
         const { error } = await supabase.from('tasks').insert({
-            id: newTask.id,
-            name: newTask.name,
-            start_date: newTask.startDate.toISOString().split('T')[0],
-            end_date: newTask.endDate.toISOString().split('T')[0],
-            color: newTask.color,
-            employee_id: newTask.employeeId,
+            id,
+            project_id: projectId,
+            name: taskData.name,
+            start_date: taskData.startDate.toISOString().split('T')[0],
+            end_date: taskData.endDate.toISOString().split('T')[0],
+            color,
+            employee_id: taskData.employeeId,
             progress: 0,
-            description: newTask.description,
-            project_id: projectId
+            description: taskData.description,
+            position: 999
         });
         if (error) throw error;
     } else {
         const data = readLocalData();
-        const project = data.projects.find(p => p.id === projectId);
-        if (project) {
-            if (!project.tasks) project.tasks = [];
-            project.tasks.push(newTask);
-            writeLocalData(data);
-        } else {
-            throw new Error(`Project ${projectId} not found in local storage`);
-        }
+        const p = data.projects.find(x => x.id === projectId);
+        if (p) p.tasks.push({ id, ...taskData, color, progress: 0 });
+        writeLocalData(data);
     }
-    return newTask;
+    return { id, ...taskData, color, progress: 0 };
 };
 
-export const updateTask = async (projectId: string, taskId: string, taskUpdate: Partial<Omit<Task, 'id'>>): Promise<Task> => {
+export const updateTask = async (projectId: string, taskId: string, taskUpdate: Partial<Task>): Promise<Task> => {
     if (useSupabase && supabase) {
         const updates: any = {};
         if (taskUpdate.name) updates.name = taskUpdate.name;
@@ -486,21 +445,16 @@ export const updateTask = async (projectId: string, taskId: string, taskUpdate: 
         if (taskUpdate.employeeId) updates.employee_id = taskUpdate.employeeId;
         if (taskUpdate.progress !== undefined) updates.progress = taskUpdate.progress;
         if (taskUpdate.description !== undefined) updates.description = taskUpdate.description;
-
         const { error } = await supabase.from('tasks').update(updates).eq('id', taskId);
         if (error) throw error;
-        return { id: taskId, ...taskUpdate } as Task;
     } else {
         const data = readLocalData();
-        const project = data.projects.find(p => p.id === projectId);
-        const task = project?.tasks.find(t => t.id === taskId);
-        if (task) {
-            Object.assign(task, taskUpdate);
-            writeLocalData(data);
-            return task;
-        }
-        throw new Error("Task not found");
+        const p = data.projects.find(x => x.id === projectId);
+        const t = p?.tasks.find(x => x.id === taskId);
+        if (t) Object.assign(t, taskUpdate);
+        writeLocalData(data);
     }
+    return { id: taskId, ...taskUpdate } as Task;
 };
 
 export const deleteTask = async (projectId: string, taskId: string): Promise<{ id: string }> => {
@@ -509,17 +463,19 @@ export const deleteTask = async (projectId: string, taskId: string): Promise<{ i
         if (error) throw error;
     } else {
         const data = readLocalData();
-        const project = data.projects.find(p => p.id === projectId);
-        if (project) {
-            project.tasks = project.tasks.filter(t => t.id !== taskId);
-            writeLocalData(data);
-        }
+        const p = data.projects.find(x => x.id === projectId);
+        if (p) p.tasks = p.tasks.filter(t => t.id !== taskId);
+        writeLocalData(data);
     }
-    return { id: projectId };
+    return { id: taskId };
 };
 
 export const updateProjects = async (projects: Project[]): Promise<Project[]> => {
-    if (!useSupabase) {
+    if (useSupabase && supabase) {
+        const updates = projects.map((p, i) => ({ id: p.id, name: p.name, position: i }));
+        const { error } = await supabase.from('projects').upsert(updates, { onConflict: 'id' });
+        if (error && !isMissingColumnError(error, 'position')) console.error("Upsert error:", stringifyError(error));
+    } else {
         const data = readLocalData();
         data.projects = projects;
         writeLocalData(data);
@@ -527,120 +483,45 @@ export const updateProjects = async (projects: Project[]): Promise<Project[]> =>
     return projects;
 };
 
-// --- Remote Settings (System Settings) ---
+export const updateTaskPositions = async (projectId: string, tasks: Task[]) => {
+    if (useSupabase && supabase) {
+        const updates = tasks.map((t, i) => ({ id: t.id, project_id: projectId, position: i }));
+        const { error } = await supabase.from('tasks').upsert(updates, { onConflict: 'id' });
+        if (error && !isMissingColumnError(error, 'position')) {
+            console.error("Task Pos Upsert error:", stringifyError(error));
+        }
+    } else {
+        const data = readLocalData();
+        const p = data.projects.find(x => x.id === projectId);
+        if (p) p.tasks = tasks;
+        writeLocalData(data);
+    }
+};
 
 export const getRemoteSettings = async (key: string): Promise<any> => {
     if (!useSupabase || !supabase) return null;
     try {
-        const { data, error } = await supabase
-            .from('system_settings')
-            .select('value')
-            .eq('key', key)
-            .single();
+        const { data, error } = await supabase.from('system_settings').select('value').eq('key', key).single();
         if (error) return null;
         return data?.value;
-    } catch (e) {
-        return null;
-    }
+    } catch { return null; }
 };
 
 export const saveRemoteSettings = async (key: string, value: any): Promise<void> => {
     if (!useSupabase || !supabase) return;
     try {
-        const { error } = await supabase.from('system_settings').upsert({ key, value });
-        if (error && error.code === '42P01') return;
-    } catch (e) {}
-};
-
-// --- Seed & Check Functions ---
-
-const seedDatabase = async () => {
-    if (!supabase) return;
-    
-    // 1. Seed Departments
-    const { error: dError } = await supabase.from('departments').insert(defaultDepartments.map(d => ({ id: d.id, name: d.name })));
-    if (dError) { 
-        if(dError.code === '42P01') throw new Error('TABLES_MISSING'); 
-        console.error('Dept Seed Error', dError);
-    }
-
-    // 2. Seed Employees
-    const { error: eError } = await supabase.from('employees').insert(defaultEmployees.map(e => ({ id: e.id, name: e.name, department_id: e.departmentId })));
-    if (eError) console.error('Emp Seed Error', eError);
-
-    // 3. Seed Projects & Tasks
-    const initialData = getInitialData();
-    const p1 = initialData.projects[0];
-    const { error: pError } = await supabase.from('projects').insert({ id: p1.id, name: p1.name });
-    if (pError) console.error('Proj Seed Error', pError);
-
-    // Map tasks to database format
-    const dbTasks = p1.tasks.map(t => ({
-        id: t.id,
-        project_id: p1.id,
-        name: t.name,
-        start_date: t.startDate.toISOString().split('T')[0],
-        end_date: t.endDate.toISOString().split('T')[0],
-        color: t.color,
-        employee_id: t.employeeId,
-        progress: t.progress,
-        description: t.description
-    }));
-
-    const { error: tError } = await supabase.from('tasks').insert(dbTasks);
-    if (tError) console.error('Task Seed Error', tError);
+        await supabase.from('system_settings').upsert({ key, value });
+    } catch {}
 };
 
 export const checkConnectionAndSeed = async () => {
     if (!useSupabase || !supabase) return;
-
-    try {
-        // Check projects table existence
-        const { data, error } = await supabase.from('projects').select('id').limit(1);
-        
-        if (error) {
-            if (error.code === '42P01') {
-                throw new Error('TABLES_MISSING');
-            }
-            throw error;
-        }
-
-        // Also check if departments exist (migrations)
-        const { error: dCheckError } = await supabase.from('departments').select('id').limit(1);
-        if (dCheckError && dCheckError.code === '42P01') {
-             throw new Error('TABLES_MISSING'); // Departments table missing
-        }
-
-        if (data.length === 0) {
-            console.log("Database empty, seeding initial data...");
-            await seedDatabase();
-        }
-    } catch (error) {
-        throw error;
-    }
+    const { error } = await supabase.from('projects').select('id').limit(1);
+    if (error && error.code === '42P01') throw new Error('TABLES_MISSING');
 };
 
-// --- Realtime Subscription ---
 export const subscribeToChanges = (callback: () => void) => {
     if (!useSupabase || !supabase) return () => {};
-
-    console.log("Initializing Realtime Subscription...");
-
-    const channel = supabase.channel('db-changes')
-        .on(
-            'postgres_changes',
-            { event: '*', schema: 'public' },
-            (payload) => {
-                console.log('Realtime Change Detected:', payload.eventType, payload.table);
-                callback();
-            }
-        )
-        .subscribe((status) => {
-            console.log("Realtime Connection Status:", status);
-        });
-
-    return () => {
-        console.log("Cleaning up Realtime Subscription...");
-        supabase?.removeChannel(channel);
-    };
+    const channel = supabase.channel('schema-db-changes').on('postgres_changes', { event: '*', schema: 'public' }, callback).subscribe();
+    return () => { supabase?.removeChannel(channel); };
 };
